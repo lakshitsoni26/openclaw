@@ -4,7 +4,6 @@ import { appendRegularFile } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/text-runtime";
 import { formatUnknownError } from "./errors.js";
 import { buildFeedbackEvent, runFeedbackReflection } from "./feedback-reflection.js";
-import { respondToMSTeamsFileConsentInvoke } from "./file-consent-invoke.js";
 import { extractMSTeamsConversationMessageId, normalizeMSTeamsConversationId } from "./inbound.js";
 import { resolveMSTeamsSenderAccess } from "./monitor-handler/access.js";
 import { createMSTeamsMessageHandler } from "./monitor-handler/message-handler.js";
@@ -330,12 +329,6 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
   if (originalRun) {
     handler.run = async (context: unknown) => {
       const ctx = context as MSTeamsTurnContext;
-      // Handle file consent invokes before passing to normal flow
-      if (ctx.activity?.type === "invoke" && ctx.activity?.name === "fileConsent/invoke") {
-        await respondToMSTeamsFileConsentInvoke(ctx, deps.log);
-        return;
-      }
-
       // Handle feedback invokes (thumbs up/down on AI-generated messages).
       // Just return after handling — the process() handler sends HTTP 200 automatically.
       // Do NOT call sendActivity with invokeResponse; the SDK would POST

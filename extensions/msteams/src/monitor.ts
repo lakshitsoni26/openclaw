@@ -11,6 +11,7 @@ import {
 import { createMSTeamsConversationStoreFs } from "./conversation-store-fs.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { formatUnknownError } from "./errors.js";
+import { runMSTeamsFileConsentInvokeHandler } from "./file-consent-invoke.js";
 import { registerMSTeamsHandlers, type MSTeamsActivityHandler } from "./monitor-handler.js";
 import {
   createMSTeamsPollStoreFs,
@@ -22,11 +23,13 @@ import {
   resolveMSTeamsUserAllowlist,
 } from "./resolve-allowlist.js";
 import { getMSTeamsRuntime } from "./runtime.js";
+import type { MSTeamsTurnContext } from "./sdk-types.js";
 import {
   createMSTeamsExpressAdapter,
   createMSTeamsTokenProvider,
   loadMSTeamsSdkWithAuth,
   type MSTeamsApp,
+  type MSTeamsCardActionResponse,
 } from "./sdk.js";
 import { createMSTeamsSsoTokenStoreFs } from "./sso-token-store.js";
 import type { MSTeamsSsoDeps } from "./sso.js";
@@ -352,14 +355,10 @@ export async function monitorMSTeamsProvider(
   // We must return an InvokeResponse-shaped value so Teams updates the card UI;
   // returning nothing or letting the catch-all process it makes Teams report
   // "Unable to reach app".
-  app.on("card.action", async (ctx: unknown) => {
+  app.on("card.action", async (ctx): Promise<MSTeamsCardActionResponse> => {
     const adaptedCtx = adaptSdkContext(ctx, app);
     try {
-      const activity = (
-        adaptedCtx as {
-          activity?: { value?: unknown; from?: { id?: string; aadObjectId?: string } };
-        }
-      ).activity;
+      const activity = adaptedCtx.activity;
       const vote = extractMSTeamsPollVote(activity);
       if (vote) {
         const voterId = activity?.from?.aadObjectId ?? activity?.from?.id ?? "unknown";
@@ -391,7 +390,11 @@ export async function monitorMSTeamsProvider(
           return {
             statusCode: 500,
             type: "application/vnd.microsoft.error",
-            value: { code: "RECORD_VOTE_FAILED", message: "Could not record vote." },
+            value: {
+              code: "RECORD_VOTE_FAILED",
+              message: "Could not record vote.",
+              innerHttpError: { statusCode: 500, body: null },
+            },
           };
         }
       }
@@ -408,23 +411,44 @@ export async function monitorMSTeamsProvider(
       return {
         statusCode: 500,
         type: "application/vnd.microsoft.error",
-        value: { code: "CARD_ACTION_FAILED", message: "Card action failed." },
+        value: {
+          code: "CARD_ACTION_FAILED",
+          message: "Card action failed.",
+          innerHttpError: { statusCode: 500, body: null },
+        },
       };
     }
+  });
+
+  // File-consent invokes (large-file upload accept/decline). We register
+  // typed handlers so the SDK writes the HTTP InvokeResponse for us — the
+  // old `ctx.sendActivity({ type: "invokeResponse" })` shape no longer
+  // works on the new SDK because that ctx call becomes an outbound BF
+  // activity instead of the HTTP response (Brad #2 / codex #4).
+  app.on("file.consent.accept", async (ctx) => {
+    await runMSTeamsFileConsentInvokeHandler(adaptSdkContext(ctx, app), log);
+  });
+  app.on("file.consent.decline", async (ctx) => {
+    await runMSTeamsFileConsentInvokeHandler(adaptSdkContext(ctx, app), log);
   });
 
   // Catch all inbound activities from the SDK and delegate to our existing
   // handler dispatch system. The SDK has already validated JWT and parsed the
   // activity by this point.
-  app.on("activity", async (ctx: unknown) => {
+  app.on("activity", async (ctx) => {
     try {
-      const activity = (ctx as { activity?: { type?: string; name?: string } }).activity;
-      // Skip adaptiveCard/action — handled by the dedicated card.action route
-      // above (which also dispatches non-poll actions to handler.run).
-      if (activity?.type === "invoke" && activity?.name === "adaptiveCard/action") {
-        return;
+      const adaptedCtx = adaptSdkContext(ctx, app);
+      const activity = adaptedCtx.activity;
+      // Skip invokes that have dedicated typed routes above.
+      if (activity?.type === "invoke") {
+        if (activity?.name === "adaptiveCard/action") {
+          return;
+        }
+        if (activity?.name === "fileConsent/invoke") {
+          return;
+        }
       }
-      await handler.run!(adaptSdkContext(ctx, app));
+      await handler.run!(adaptedCtx);
     } catch (err) {
       log.error("msteams webhook failed", { error: formatUnknownError(err) });
     }
@@ -544,11 +568,8 @@ function buildActivityHandler(): MSTeamsActivityHandler {
  * Adapt a new @microsoft/teams.apps SDK context to the MSTeamsTurnContext interface
  * our handlers expect. The new SDK uses reply()/send() instead of sendActivity().
  */
-function adaptSdkContext(ctx: unknown, app: MSTeamsApp): unknown {
-  if (!ctx || typeof ctx !== "object") {
-    return ctx;
-  }
-  const sdkCtx = ctx as {
+function adaptSdkContext(ctx: unknown, app: MSTeamsApp): MSTeamsTurnContext {
+  const sdkCtx = (ctx ?? {}) as {
     activity?: { id?: string; conversation?: { id?: string; conversationType?: string } };
     reply?: (activity: unknown) => Promise<unknown>;
     send?: (activity: unknown) => Promise<unknown>;
@@ -561,7 +582,7 @@ function adaptSdkContext(ctx: unknown, app: MSTeamsApp): unknown {
   };
   if (typeof sdkCtx.reply !== "function" && typeof sdkCtx.send !== "function") {
     // Already adapted or old-style context — pass through.
-    return ctx;
+    return ctx as MSTeamsTurnContext;
   }
   const conversationId = sdkCtx.activity?.conversation?.id ?? "";
   const conversationType = (sdkCtx.activity?.conversation?.conversationType ?? "").toLowerCase();
