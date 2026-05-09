@@ -1057,6 +1057,9 @@ importers:
       '@azure/identity':
         specifier: 4.13.1
         version: 4.13.1
+      '@microsoft/teams.api':
+        specifier: 2.0.10
+        version: 2.0.10
       '@microsoft/teams.apps':
         specifier: 2.0.10
         version: 2.0.10
