@@ -198,31 +198,16 @@ const recordInboundSession = vi.hoisted(() =>
   vi.fn<(params?: unknown) => Promise<void>>(async () => {}),
 );
 const configSessionsMocks = vi.hoisted(() => ({
-  loadSessionStore: vi.fn<(storePath: string, opts?: unknown) => Record<string, unknown>>(
-    () => ({}),
-  ),
+  getSessionEntry: vi.fn<(params?: unknown) => unknown>(() => undefined),
+  readSessionTranscriptEvents: vi.fn<(params?: unknown) => Promise<unknown[]>>(async () => []),
   readSessionUpdatedAt: vi.fn<(params?: unknown) => number | undefined>(() => undefined),
-  readLatestAssistantTextFromSessionTranscript: vi.fn<
-    (sessionFile: string) => Promise<{ text: string; timestamp?: number } | undefined>
-  >(async () => undefined),
-  resolveAndPersistSessionFile: vi.fn<(params?: unknown) => Promise<{ sessionFile: string }>>(
-    async () => ({ sessionFile: "/tmp/openclaw-discord-process-test-session.jsonl" }),
-  ),
-  resolveSessionStoreEntry: vi.fn<
-    (params: { store: Record<string, unknown>; sessionKey?: string }) => { existing?: unknown }
-  >((params) => ({
-    existing: params.sessionKey ? params.store[params.sessionKey] : undefined,
-  })),
   resolveStorePath: vi.fn<(path?: unknown, opts?: unknown) => string>(
     () => "/tmp/openclaw-discord-process-test-sessions.json",
   ),
 }));
-const loadSessionStore = configSessionsMocks.loadSessionStore;
+const getSessionEntry = configSessionsMocks.getSessionEntry;
+const readSessionTranscriptEvents = configSessionsMocks.readSessionTranscriptEvents;
 const readSessionUpdatedAt = configSessionsMocks.readSessionUpdatedAt;
-const readLatestAssistantTextFromSessionTranscript =
-  configSessionsMocks.readLatestAssistantTextFromSessionTranscript;
-const resolveAndPersistSessionFile = configSessionsMocks.resolveAndPersistSessionFile;
-const resolveSessionStoreEntry = configSessionsMocks.resolveSessionStoreEntry;
 const resolveStorePath = configSessionsMocks.resolveStorePath;
 const createDiscordRestClientSpy = vi.hoisted(() =>
   vi.fn<
@@ -394,17 +379,15 @@ vi.mock("openclaw/plugin-sdk/conversation-runtime", () => ({
 }));
 
 vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
-  loadSessionStore: (storePath: string, opts?: unknown) =>
-    configSessionsMocks.loadSessionStore(storePath, opts),
+  getSessionEntry: (params?: unknown) => configSessionsMocks.getSessionEntry(params),
   readSessionUpdatedAt: (params?: unknown) => configSessionsMocks.readSessionUpdatedAt(params),
-  readLatestAssistantTextFromSessionTranscript: (sessionFile: string) =>
-    configSessionsMocks.readLatestAssistantTextFromSessionTranscript(sessionFile),
-  resolveAndPersistSessionFile: (params?: unknown) =>
-    configSessionsMocks.resolveAndPersistSessionFile(params),
-  resolveSessionStoreEntry: (params: { store: Record<string, unknown>; sessionKey?: string }) =>
-    configSessionsMocks.resolveSessionStoreEntry(params),
   resolveStorePath: (path?: unknown, opts?: unknown) =>
     configSessionsMocks.resolveStorePath(path, opts),
+}));
+
+vi.mock("openclaw/plugin-sdk/session-transcript-runtime", () => ({
+  readSessionTranscriptEvents: (params?: unknown) =>
+    configSessionsMocks.readSessionTranscriptEvents(params),
 }));
 
 vi.mock("../client.js", () => ({
@@ -499,24 +482,16 @@ beforeEach(() => {
   createDiscordDraftStream.mockClear();
   dispatchInboundMessage.mockClear();
   recordInboundSession.mockClear();
-  loadSessionStore.mockClear();
   readSessionUpdatedAt.mockClear();
-  readLatestAssistantTextFromSessionTranscript.mockClear();
-  resolveAndPersistSessionFile.mockClear();
-  resolveSessionStoreEntry.mockClear();
+  getSessionEntry.mockClear();
+  readSessionTranscriptEvents.mockClear();
   resolveStorePath.mockClear();
   createDiscordRestClientSpy.mockClear();
   dispatchInboundMessage.mockResolvedValue(createNoQueuedDispatchResult());
   recordInboundSession.mockResolvedValue(undefined);
-  loadSessionStore.mockReturnValue({});
   readSessionUpdatedAt.mockReturnValue(undefined);
-  readLatestAssistantTextFromSessionTranscript.mockResolvedValue(undefined);
-  resolveAndPersistSessionFile.mockResolvedValue({
-    sessionFile: "/tmp/openclaw-discord-process-test-session.jsonl",
-  });
-  resolveSessionStoreEntry.mockImplementation((params) => ({
-    existing: params.sessionKey ? params.store[params.sessionKey] : undefined,
-  }));
+  getSessionEntry.mockReturnValue(undefined);
+  readSessionTranscriptEvents.mockResolvedValue([]);
   resolveStorePath.mockReturnValue("/tmp/openclaw-discord-process-test-sessions.json");
   threadBindingTesting.resetThreadBindingsForTests();
 });
@@ -2202,13 +2177,16 @@ describe("processDiscordMessage draft streaming", () => {
       (_value, index) => `continuation${index}`,
     ).join(" ")}`;
 
-    loadSessionStore.mockReturnValue({
-      "agent:main:discord:channel:c1": { sessionId: "session-1" },
-    });
-    readLatestAssistantTextFromSessionTranscript.mockResolvedValue({
-      text: fullAnswer,
-      timestamp: Date.now() + 60_000,
-    });
+    getSessionEntry.mockReturnValue({ sessionId: "session-1" });
+    readSessionTranscriptEvents.mockResolvedValue([
+      {
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: fullAnswer }],
+          timestamp: Date.now() + 60_000,
+        },
+      },
+    ]);
     dispatchInboundMessage.mockImplementationOnce(async (params?: DispatchInboundParams) => {
       await params?.replyOptions?.onToolStart?.({ name: "exec", phase: "start" });
       await params?.replyOptions?.onItemEvent?.({ progressText: "exec done" });

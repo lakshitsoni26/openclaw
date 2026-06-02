@@ -1,4 +1,3 @@
-import path from "node:path";
 import { MessageFlags } from "discord-api-types/v10";
 import {
   formatReasoningMessage,
@@ -41,13 +40,9 @@ import {
 } from "openclaw/plugin-sdk/reply-payload";
 import type { ReplyDispatchKind, ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
-import {
-  loadSessionStore,
-  readLatestAssistantTextFromSessionTranscript,
-  resolveAndPersistSessionFile,
-  resolveSessionStoreEntry,
-  resolveStorePath,
-} from "openclaw/plugin-sdk/session-store-runtime";
+import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import { readSessionTranscriptEvents } from "openclaw/plugin-sdk/session-transcript-runtime";
+import { extractAssistantVisibleText } from "openclaw/plugin-sdk/text-chunking";
 import { resolveDiscordAccount, resolveDiscordMaxLinesPerMessage } from "../accounts.js";
 import { createDiscordRestClient } from "../client.js";
 import { beginDiscordInboundEventDeliveryCorrelation } from "../inbound-event-delivery.js";
@@ -144,6 +139,58 @@ type ToolStartPayload = {
   args?: Record<string, unknown>;
   detailMode?: "explain" | "raw";
 };
+
+type AssistantTranscriptText = {
+  text: string;
+  timestamp?: number;
+};
+
+function resolveAssistantTranscriptText(event: unknown): AssistantTranscriptText | undefined {
+  if (!event || typeof event !== "object") {
+    return undefined;
+  }
+  const message = (event as { message?: unknown }).message;
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+  const record = message as {
+    model?: unknown;
+    provider?: unknown;
+    role?: unknown;
+    timestamp?: unknown;
+  };
+  if (record.role !== "assistant") {
+    return undefined;
+  }
+  if (
+    record.provider === "openclaw" &&
+    (record.model === "delivery-mirror" || record.model === "gateway-injected")
+  ) {
+    return undefined;
+  }
+  const text = extractAssistantVisibleText(record)?.trim();
+  if (!text) {
+    return undefined;
+  }
+  return {
+    text,
+    ...(typeof record.timestamp === "number" && Number.isFinite(record.timestamp)
+      ? { timestamp: record.timestamp }
+      : {}),
+  };
+}
+
+function resolveLatestAssistantTranscriptText(
+  events: unknown[],
+): AssistantTranscriptText | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const text = resolveAssistantTranscriptText(events[index]);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+}
 
 function readToolStringArg(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key];
@@ -514,21 +561,21 @@ async function processDiscordMessageInner(
     }
     try {
       const storePath = resolveStorePath(cfg.session?.store, { agentId: route.agentId });
-      const store = loadSessionStore(storePath, { clone: false });
-      const sessionEntry = resolveSessionStoreEntry({ store, sessionKey }).existing;
+      const sessionEntry = getSessionEntry({
+        agentId: route.agentId,
+        sessionKey,
+        storePath,
+      });
       if (!sessionEntry?.sessionId) {
         return undefined;
       }
-      const { sessionFile } = await resolveAndPersistSessionFile({
+      const events = await readSessionTranscriptEvents({
+        agentId: route.agentId,
         sessionId: sessionEntry.sessionId,
         sessionKey,
-        sessionStore: store,
         storePath,
-        sessionEntry,
-        agentId: route.agentId,
-        sessionsDir: path.dirname(storePath),
       });
-      const latest = await readLatestAssistantTextFromSessionTranscript(sessionFile);
+      const latest = resolveLatestAssistantTranscriptText(events);
       if (!latest?.timestamp || latest.timestamp < dispatchStartedAt) {
         return undefined;
       }

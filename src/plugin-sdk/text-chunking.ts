@@ -41,6 +41,7 @@ export {
   stripToolCallXmlTags,
   type AssistantVisibleTextSanitizerProfile,
 } from "../shared/text/assistant-visible-text.js";
+export { extractAssistantVisibleText } from "../shared/chat-message-content.js";
 export {
   FILE_REF_EXTENSIONS_WITH_TLD,
   isAutoLinkedFileRef,

@@ -68,19 +68,14 @@ const createChannelMessageReplyPipeline = vi.hoisted(() =>
   })),
 );
 const wasSentByBot = vi.hoisted(() => vi.fn(() => false));
-const appendSessionTranscriptMessage = vi.hoisted(() =>
+const appendSessionTranscriptMessageByIdentity = vi.hoisted(() =>
   vi.fn(async (_params: { message?: unknown }) => ({ messageId: "m1" })),
 );
-const emitSessionTranscriptUpdate = vi.hoisted(() => vi.fn());
+const publishSessionTranscriptUpdateByIdentity = vi.hoisted(() => vi.fn());
+const readSessionTranscriptEvents = vi.hoisted(() => vi.fn(async () => []));
+const getSessionEntry = vi.hoisted(() => vi.fn());
 const loadSessionStore = vi.hoisted(() => vi.fn());
-const readLatestAssistantTextFromSessionTranscript = vi.hoisted(() => vi.fn());
 const resolveStorePath = vi.hoisted(() => vi.fn(() => "/tmp/sessions.json"));
-const resolveAndPersistSessionFile = vi.hoisted(() =>
-  vi.fn(async () => ({
-    sessionFile: "/tmp/session.jsonl",
-    sessionEntry: { sessionId: "s1", sessionFile: "/tmp/session.jsonl" },
-  })),
-);
 const generateTopicLabel = vi.hoisted(() => vi.fn());
 const describeStickerImage = vi.hoisted(() => vi.fn(async () => null));
 const loadModelCatalog = vi.hoisted(() => vi.fn(async () => ({})));
@@ -113,12 +108,14 @@ vi.mock("openclaw/plugin-sdk/channel-outbound", async (importOriginal) => {
   };
 });
 
-vi.mock("openclaw/plugin-sdk/agent-harness-runtime", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/agent-harness-runtime")>();
+vi.mock("openclaw/plugin-sdk/session-transcript-runtime", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("openclaw/plugin-sdk/session-transcript-runtime")>();
   return {
     ...actual,
-    appendSessionTranscriptMessage,
-    emitSessionTranscriptUpdate,
+    appendSessionTranscriptMessageByIdentity,
+    publishSessionTranscriptUpdateByIdentity,
+    readSessionTranscriptEvents,
   };
 });
 
@@ -145,10 +142,9 @@ vi.mock("./send.js", () => ({
 
 vi.mock("./bot-message-dispatch.runtime.js", () => ({
   generateTopicLabel,
+  getSessionEntry,
   getAgentScopedMediaLocalRoots,
   loadSessionStore,
-  readLatestAssistantTextFromSessionTranscript,
-  resolveAndPersistSessionFile,
   resolveAutoTopicLabelConfig: resolveAutoTopicLabelConfigRuntime,
   resolveChunkMode,
   resolveMarkdownTableMode,
@@ -260,12 +256,12 @@ describe("dispatchTelegramMessage draft streaming", () => {
     listSkillCommandsForAgents.mockReset();
     createChannelMessageReplyPipeline.mockReset();
     wasSentByBot.mockReset();
-    appendSessionTranscriptMessage.mockReset();
-    emitSessionTranscriptUpdate.mockReset();
-    readLatestAssistantTextFromSessionTranscript.mockReset();
+    appendSessionTranscriptMessageByIdentity.mockReset();
+    publishSessionTranscriptUpdateByIdentity.mockReset();
+    readSessionTranscriptEvents.mockReset();
+    getSessionEntry.mockReset();
     loadSessionStore.mockReset();
     resolveStorePath.mockReset();
-    resolveAndPersistSessionFile.mockReset();
     generateTopicLabel.mockReset();
     getAgentScopedMediaLocalRoots.mockClear();
     resolveChunkMode.mockClear();
@@ -315,11 +311,13 @@ describe("dispatchTelegramMessage draft streaming", () => {
       onModelSelected: () => undefined,
     });
     wasSentByBot.mockReturnValue(false);
+    appendSessionTranscriptMessageByIdentity.mockImplementation(async ({ message }) => ({
+      messageId: "m1",
+      message,
+    }));
     resolveStorePath.mockReturnValue("/tmp/sessions.json");
-    resolveAndPersistSessionFile.mockResolvedValue({
-      sessionFile: "/tmp/session.jsonl",
-      sessionEntry: { sessionId: "s1", sessionFile: "/tmp/session.jsonl" },
-    });
+    getSessionEntry.mockReturnValue(undefined);
+    readSessionTranscriptEvents.mockResolvedValue([]);
     loadSessionStore.mockReturnValue({});
     generateTopicLabel.mockResolvedValue("Topic label");
     describeStickerImage.mockResolvedValue(null);
@@ -1417,9 +1415,7 @@ describe("dispatchTelegramMessage draft streaming", () => {
     setupDraftStreams({ answerMessageId: 2001 });
     const context = createContext();
     context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
-    loadSessionStore.mockReturnValue({
-      "agent:default:telegram:direct:123": { sessionId: "s1" },
-    });
+    getSessionEntry.mockReturnValue({ sessionId: "s1" });
     dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
       await dispatcherOptions.deliver({ text: "Final answer" }, { kind: "final" });
       return { queuedFinal: true };
@@ -1427,28 +1423,34 @@ describe("dispatchTelegramMessage draft streaming", () => {
 
     await dispatchWithContext({ context });
 
-    const transcriptCall = expectRecordFields(mockCallArg(appendSessionTranscriptMessage), {
-      transcriptPath: "/tmp/session.jsonl",
-    });
+    const transcriptCall = expectRecordFields(
+      mockCallArg(appendSessionTranscriptMessageByIdentity),
+      {
+        agentId: "default",
+        sessionId: "s1",
+        sessionKey: "agent:default:telegram:direct:123",
+        storePath: "/tmp/sessions.json",
+      },
+    );
     expectRecordFields(transcriptCall.message, {
       role: "assistant",
       provider: "openclaw",
       model: "delivery-mirror",
       content: [{ type: "text", text: "Final answer" }],
     });
-    expectRecordFields(mockCallArg(emitSessionTranscriptUpdate), {
-      sessionFile: "/tmp/session.jsonl",
+    expectRecordFields(mockCallArg(publishSessionTranscriptUpdateByIdentity), {
+      agentId: "default",
+      sessionId: "s1",
       sessionKey: "agent:default:telegram:direct:123",
-      messageId: "m1",
+      storePath: "/tmp/sessions.json",
+      update: expect.objectContaining({ messageId: "m1" }),
     });
   });
 
   it("does not mirror non-final tool progress into the session transcript", async () => {
     const context = createContext();
     context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
-    loadSessionStore.mockReturnValue({
-      "agent:default:telegram:direct:123": { sessionId: "s1" },
-    });
+    getSessionEntry.mockReturnValue({ sessionId: "s1" });
     deliverReplies.mockImplementation(
       async (params: {
         replies?: Array<{ text?: string }>;
@@ -1480,10 +1482,14 @@ describe("dispatchTelegramMessage draft streaming", () => {
       transcriptMirror: undefined,
     });
     expect(typeof mockCallArg(deliverReplies, 1).transcriptMirror).toBe("function");
-    expect(appendSessionTranscriptMessage).toHaveBeenCalledTimes(1);
-    const transcriptCall = expectRecordFields(mockCallArg(appendSessionTranscriptMessage), {
-      transcriptPath: "/tmp/session.jsonl",
-    });
+    expect(appendSessionTranscriptMessageByIdentity).toHaveBeenCalledTimes(1);
+    const transcriptCall = expectRecordFields(
+      mockCallArg(appendSessionTranscriptMessageByIdentity),
+      {
+        sessionId: "s1",
+        sessionKey: "agent:default:telegram:direct:123",
+      },
+    );
     expectRecordFields(transcriptCall.message, {
       role: "assistant",
       provider: "openclaw",
@@ -1500,13 +1506,16 @@ describe("dispatchTelegramMessage draft streaming", () => {
       "Ja. Hier nochmal sauber Schritt fuer Schritt. Einen API Key kopiert man...";
     const context = createContext();
     context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
-    loadSessionStore.mockReturnValue({
-      "agent:default:telegram:direct:123": { sessionId: "s1" },
-    });
-    readLatestAssistantTextFromSessionTranscript.mockResolvedValue({
-      text: fullAnswer,
-      timestamp: Date.now() + 1_000,
-    });
+    getSessionEntry.mockReturnValue({ sessionId: "s1" });
+    readSessionTranscriptEvents.mockResolvedValue([
+      {
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: fullAnswer }],
+          timestamp: Date.now() + 1_000,
+        },
+      },
+    ]);
     dispatchReplyWithBufferedBlockDispatcher.mockImplementation(
       async ({ dispatcherOptions, replyOptions }) => {
         await replyOptions?.onPartialReply?.({ text: fullAnswer });
@@ -1523,9 +1532,13 @@ describe("dispatchTelegramMessage draft streaming", () => {
       content: fullAnswer,
       messageId: 2001,
     });
-    const transcriptCall = expectRecordFields(mockCallArg(appendSessionTranscriptMessage), {
-      transcriptPath: "/tmp/session.jsonl",
-    });
+    const transcriptCall = expectRecordFields(
+      mockCallArg(appendSessionTranscriptMessageByIdentity),
+      {
+        sessionId: "s1",
+        sessionKey: "agent:default:telegram:direct:123",
+      },
+    );
     expectRecordFields(transcriptCall.message, {
       role: "assistant",
       provider: "openclaw",
@@ -1538,10 +1551,8 @@ describe("dispatchTelegramMessage draft streaming", () => {
     setupDraftStreams({ answerMessageId: 2001 });
     const context = createContext();
     context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
-    loadSessionStore.mockReturnValue({
-      "agent:default:telegram:direct:123": { sessionId: "s1" },
-    });
-    appendSessionTranscriptMessage.mockImplementationOnce(async ({ message }) => ({
+    getSessionEntry.mockReturnValue({ sessionId: "s1" });
+    appendSessionTranscriptMessageByIdentity.mockImplementationOnce(async ({ message }) => ({
       messageId: "m1",
       message: {
         ...(message as Record<string, unknown>),
@@ -1555,33 +1566,37 @@ describe("dispatchTelegramMessage draft streaming", () => {
 
     await dispatchWithContext({ context });
 
-    expectRecordFields(mockCallArg(emitSessionTranscriptUpdate), {
-      sessionFile: "/tmp/session.jsonl",
+    expectRecordFields(mockCallArg(publishSessionTranscriptUpdateByIdentity), {
+      agentId: "default",
+      sessionId: "s1",
       sessionKey: "agent:default:telegram:direct:123",
-      messageId: "m1",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "Final sk-abc…0xyz" }],
-        api: "openai-responses",
-        provider: "openclaw",
-        model: "delivery-mirror",
-        usage: {
-          input: 0,
-          output: 0,
-          total: 0,
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-          cache: {
-            read: 0,
-            write: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
+      storePath: "/tmp/sessions.json",
+      update: {
+        messageId: "m1",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Final sk-abc…0xyz" }],
+          api: "openai-responses",
+          provider: "openclaw",
+          model: "delivery-mirror",
+          usage: {
+            input: 0,
+            output: 0,
             total: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cache: {
+              read: 0,
+              write: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
           },
+          stopReason: "stop",
+          timestamp: expect.any(Number),
         },
-        stopReason: "stop",
-        timestamp: expect.any(Number),
       },
     });
   });
@@ -2194,13 +2209,16 @@ describe("dispatchTelegramMessage draft streaming", () => {
       "Ja. Hier nochmal sauber Schritt fuer Schritt. Einen API Key kopiert man...";
     const context = createContext();
     context.ctxPayload.SessionKey = "agent:default:telegram:direct:123";
-    loadSessionStore.mockReturnValue({
-      "agent:default:telegram:direct:123": { sessionId: "s1" },
-    });
-    readLatestAssistantTextFromSessionTranscript.mockResolvedValue({
-      text: fullAnswer,
-      timestamp: Date.now() + 1_000,
-    });
+    getSessionEntry.mockReturnValue({ sessionId: "s1" });
+    readSessionTranscriptEvents.mockResolvedValue([
+      {
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: fullAnswer }],
+          timestamp: Date.now() + 1_000,
+        },
+      },
+    ]);
     dispatchReplyWithBufferedBlockDispatcher.mockImplementation(
       async ({ dispatcherOptions, replyOptions }) => {
         await replyOptions?.onToolStart?.({ name: "exec", phase: "start" });
