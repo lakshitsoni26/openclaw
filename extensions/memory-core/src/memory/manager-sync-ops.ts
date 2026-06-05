@@ -114,14 +114,45 @@ const IGNORED_MEMORY_WATCH_DIR_NAMES = new Set([
 ]);
 
 const log = createSubsystemLogger("memory");
+const MEMORY_CORE_TRANSCRIPT_UPDATE_SUBSCRIBER_KEY = Symbol.for(
+  "openclaw.memoryCore.sessionTranscriptUpdateSubscriber",
+);
 const TEST_MEMORY_WATCH_FACTORY_KEY = Symbol.for("openclaw.test.memoryWatchFactory");
 const TEST_MEMORY_NATIVE_WATCH_FACTORY_KEY = Symbol.for("openclaw.test.memoryNativeWatchFactory");
+
+type MemorySessionTranscriptUpdate = {
+  agentId?: string;
+  sessionFile?: string;
+  sessionKey?: string;
+  target?: {
+    agentId: string;
+    sessionId: string;
+    sessionKey: string;
+    targetKind: "active-session-file" | "runtime-session";
+  };
+};
+
+type MemoryTranscriptUpdateSubscriber = (
+  listener: (update: MemorySessionTranscriptUpdate) => void,
+) => () => void;
 
 type NativeMemoryWatchPair = {
   dir: string;
   main: fsSync.FSWatcher;
   parent: fsSync.FSWatcher | null;
 };
+
+function subscribeMemorySessionTranscriptUpdates(
+  listener: (update: MemorySessionTranscriptUpdate) => void,
+): () => void {
+  const injected = (globalThis as Record<symbol, unknown>)[
+    MEMORY_CORE_TRANSCRIPT_UPDATE_SUBSCRIBER_KEY
+  ];
+  if (typeof injected === "function") {
+    return (injected as MemoryTranscriptUpdateSubscriber)(listener);
+  }
+  return onSessionTranscriptUpdate(listener);
+}
 
 function resolveMemoryWatchFactory(): typeof chokidar.watch {
   if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
@@ -776,7 +807,7 @@ export abstract class MemoryManagerSyncOps {
     if (!this.sources.has("sessions") || this.sessionUnsubscribe) {
       return;
     }
-    this.sessionUnsubscribe = onSessionTranscriptUpdate((update) => {
+    this.sessionUnsubscribe = subscribeMemorySessionTranscriptUpdates((update) => {
       if (this.closed) {
         return;
       }

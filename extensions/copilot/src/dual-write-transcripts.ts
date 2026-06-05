@@ -172,8 +172,17 @@ export async function mirrorCopilotTranscript(
     emitSessionTranscriptUpdate({
       sessionFile: params.sessionFile,
       sessionKey: params.sessionKey,
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.sessionId && params.agentId
+        ? {
+            target: {
+              agentId: params.agentId,
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey,
+              targetKind: "active-session-file",
+            },
+          }
+        : {}),
     });
   } else {
     emitSessionTranscriptUpdate(params.sessionFile);

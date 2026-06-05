@@ -7,7 +7,10 @@ import {
   appendAssistantMessageToSessionTranscript,
   appendExactAssistantMessageToSessionTranscript,
 } from "../config/sessions/transcript.js";
-import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
+import {
+  emitInternalSessionTranscriptUpdate,
+  emitSessionTranscriptUpdate,
+} from "../sessions/transcript-events.js";
 import { testState } from "./test-helpers.runtime-state.js";
 import {
   connectReq,
@@ -606,7 +609,7 @@ describe("session history HTTP endpoints", () => {
       const stream = await openSessionHistorySse(harness.port, "agent:main:main");
       await expectHistoryEventTexts(stream, ["first message"]);
 
-      emitSessionTranscriptUpdate({
+      emitInternalSessionTranscriptUpdate({
         target: {
           agentId: "main",
           sessionId: "sess-main",

@@ -711,8 +711,17 @@ function truncateOversizedToolResultsInExistingSessionManager(params: {
     emitSessionTranscriptUpdate({
       sessionFile: params.sessionFile,
       sessionKey: params.sessionKey,
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.sessionId && params.sessionKey && params.agentId
+        ? {
+            target: {
+              agentId: params.agentId,
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey,
+              targetKind: "active-session-file",
+            },
+          }
+        : {}),
     });
   }
 
@@ -783,8 +792,17 @@ async function truncateOversizedToolResultsInTranscriptState(params: {
     emitSessionTranscriptUpdate({
       sessionFile: params.sessionFile,
       sessionKey: params.sessionKey,
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.sessionId && params.sessionKey && params.agentId
+        ? {
+            target: {
+              agentId: params.agentId,
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey,
+              targetKind: "active-session-file",
+            },
+          }
+        : {}),
     });
   }
 

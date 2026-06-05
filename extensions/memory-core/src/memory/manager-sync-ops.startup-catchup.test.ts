@@ -14,6 +14,7 @@ import type {
   MemorySyncProgressUpdate,
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { emitInternalSessionTranscriptUpdate } from "../../../../src/sessions/transcript-events.js";
 import { MemoryManagerSyncOps } from "./manager-sync-ops.js";
 
 type MemoryIndexEntry = {
@@ -271,7 +272,7 @@ describe("session startup catch-up", () => {
     const harness = new SessionStartupCatchupHarness([]);
     harness.startTranscriptListener();
 
-    emitSessionTranscriptUpdate({
+    emitInternalSessionTranscriptUpdate({
       target: {
         agentId: "main",
         sessionId: "thread",

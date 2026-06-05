@@ -9,21 +9,31 @@ export type SessionTranscriptUpdateTarget = {
   targetKind: "active-session-file" | "runtime-session";
 };
 
-export type SessionTranscriptUpdate = {
-  /** @deprecated File-backed compatibility hint. Prefer `target` for identity. */
-  sessionFile?: string;
+type SessionTranscriptUpdateFields = {
   target?: SessionTranscriptUpdateTarget;
   sessionKey?: string;
   agentId?: string;
+  /** @deprecated Pre-SQLite compatibility mirror. Prefer `target.sessionId`. */
   sessionId?: string;
   message?: unknown;
   messageId?: string;
   messageSeq?: number;
 };
 
+export type SessionTranscriptUpdate = SessionTranscriptUpdateFields & {
+  /** @deprecated File-backed compatibility hint. Prefer `target` for identity. */
+  sessionFile: string;
+};
+
+export type InternalSessionTranscriptUpdate = SessionTranscriptUpdateFields & {
+  sessionFile?: string;
+};
+
 type SessionTranscriptListener = (update: SessionTranscriptUpdate) => void;
+type InternalSessionTranscriptListener = (update: InternalSessionTranscriptUpdate) => void;
 
 const SESSION_TRANSCRIPT_LISTENERS = new Set<SessionTranscriptListener>();
+const INTERNAL_SESSION_TRANSCRIPT_LISTENERS = new Set<InternalSessionTranscriptListener>();
 
 export function onSessionTranscriptUpdate(listener: SessionTranscriptListener): () => void {
   SESSION_TRANSCRIPT_LISTENERS.add(listener);
@@ -32,7 +42,36 @@ export function onSessionTranscriptUpdate(listener: SessionTranscriptListener): 
   };
 }
 
+export function onInternalSessionTranscriptUpdate(
+  listener: InternalSessionTranscriptListener,
+): () => void {
+  INTERNAL_SESSION_TRANSCRIPT_LISTENERS.add(listener);
+  return () => {
+    INTERNAL_SESSION_TRANSCRIPT_LISTENERS.delete(listener);
+  };
+}
+
 export function emitSessionTranscriptUpdate(update: string | SessionTranscriptUpdate): void {
+  const nextUpdate = normalizeSessionTranscriptUpdate(update, { allowIdentityOnly: false });
+  if (!nextUpdate?.sessionFile) {
+    return;
+  }
+  emitPublicSessionTranscriptUpdate(nextUpdate as SessionTranscriptUpdate);
+  emitInternalTranscriptUpdate(nextUpdate);
+}
+
+export function emitInternalSessionTranscriptUpdate(update: InternalSessionTranscriptUpdate): void {
+  const nextUpdate = normalizeSessionTranscriptUpdate(update, { allowIdentityOnly: true });
+  if (!nextUpdate) {
+    return;
+  }
+  emitInternalTranscriptUpdate(nextUpdate);
+}
+
+function normalizeSessionTranscriptUpdate(
+  update: string | InternalSessionTranscriptUpdate,
+  options: { allowIdentityOnly: boolean },
+): InternalSessionTranscriptUpdate | undefined {
   const normalized =
     typeof update === "string"
       ? { sessionFile: update }
@@ -47,15 +86,15 @@ export function emitSessionTranscriptUpdate(update: string | SessionTranscriptUp
           messageSeq: update.messageSeq,
         };
   const trimmed = normalizeOptionalString(normalized.sessionFile);
-  const target = normalizeUpdateTarget(normalized);
-  if (!trimmed && !target) {
-    return;
+  const target = normalizeUpdateTarget(normalized.target);
+  if (!trimmed && (!options.allowIdentityOnly || !target)) {
+    return undefined;
   }
   const messageSeq = asPositiveSafeInteger(normalized.messageSeq);
   const sessionKey = normalizeOptionalString(normalized.sessionKey) ?? target?.sessionKey;
   const agentId = normalizeOptionalString(normalized.agentId) ?? target?.agentId;
   const sessionId = normalizeOptionalString(normalized.sessionId) ?? target?.sessionId;
-  const nextUpdate: SessionTranscriptUpdate = {
+  return {
     ...(trimmed ? { sessionFile: trimmed } : {}),
     ...(target ? { target } : {}),
     ...(sessionKey ? { sessionKey } : {}),
@@ -67,6 +106,9 @@ export function emitSessionTranscriptUpdate(update: string | SessionTranscriptUp
       : {}),
     ...(messageSeq !== undefined ? { messageSeq } : {}),
   };
+}
+
+function emitPublicSessionTranscriptUpdate(nextUpdate: SessionTranscriptUpdate): void {
   for (const listener of SESSION_TRANSCRIPT_LISTENERS) {
     try {
       listener(nextUpdate);
@@ -76,29 +118,25 @@ export function emitSessionTranscriptUpdate(update: string | SessionTranscriptUp
   }
 }
 
-function normalizeUpdateTarget(update: {
-  agentId?: string;
-  sessionId?: string;
-  sessionKey?: string;
-  sessionFile?: string;
-  target?: SessionTranscriptUpdate["target"];
-}): SessionTranscriptUpdateTarget | undefined {
-  const sessionKey =
-    normalizeOptionalString(update.target?.sessionKey) ??
-    normalizeOptionalString(update.sessionKey);
+function emitInternalTranscriptUpdate(nextUpdate: InternalSessionTranscriptUpdate): void {
+  for (const listener of INTERNAL_SESSION_TRANSCRIPT_LISTENERS) {
+    try {
+      listener(nextUpdate);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function normalizeUpdateTarget(
+  target: InternalSessionTranscriptUpdate["target"],
+): SessionTranscriptUpdateTarget | undefined {
+  const sessionKey = normalizeOptionalString(target?.sessionKey);
   const agentId =
-    normalizeOptionalString(update.target?.agentId) ??
-    normalizeOptionalString(update.agentId) ??
+    normalizeOptionalString(target?.agentId) ??
     (sessionKey ? parseAgentSessionKey(sessionKey)?.agentId : undefined);
-  const sessionId =
-    normalizeOptionalString(update.target?.sessionId) ?? normalizeOptionalString(update.sessionId);
-  const targetKind =
-    normalizeTargetKind(update.target?.targetKind) ??
-    (agentId && sessionId && sessionKey
-      ? normalizeOptionalString(update.sessionFile)
-        ? "active-session-file"
-        : "runtime-session"
-      : undefined);
+  const sessionId = normalizeOptionalString(target?.sessionId);
+  const targetKind = normalizeTargetKind(target?.targetKind);
   if (!agentId || !sessionId || !sessionKey || !targetKind) {
     return undefined;
   }

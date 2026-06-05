@@ -5,7 +5,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vite
 import { appendAssistantMessageToSessionTranscript } from "../config/sessions/transcript.js";
 import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import * as transcriptEvents from "../sessions/transcript-events.js";
-import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
+import {
+  emitInternalSessionTranscriptUpdate,
+  emitSessionTranscriptUpdate,
+} from "../sessions/transcript-events.js";
 import { testState } from "./test-helpers.runtime-state.js";
 import {
   connectOk,
@@ -531,7 +534,7 @@ describe("session.message websocket events", () => {
 
     await withOperatorSessionSubscriber(async (ws) => {
       const messageEventPromise = waitForSessionMessageEvent(ws, "agent:main:main");
-      emitSessionTranscriptUpdate({
+      emitInternalSessionTranscriptUpdate({
         target: {
           agentId: "main",
           sessionId: "sess-main",
