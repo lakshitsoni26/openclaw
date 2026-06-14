@@ -61,7 +61,7 @@ import {
   transformProviderSystemPrompt,
 } from "../../../plugins/provider-runtime.js";
 import { getPluginToolMeta } from "../../../plugins/tools.js";
-import { isSubagentSessionKey } from "../../../routing/session-key.js";
+import { isSubagentSessionKey, parseAgentSessionKey } from "../../../routing/session-key.js";
 import { annotateInterSessionPromptText } from "../../../sessions/input-provenance.js";
 import { resolveSkillsPromptForRun } from "../../../skills/loading/workspace.js";
 import { resolveEmbeddedRunSkillEntries } from "../../../skills/runtime/embedded-run-entries.js";
@@ -858,10 +858,21 @@ export async function runEmbeddedAttempt(
 
   await fs.mkdir(resolvedWorkspace, { recursive: true });
 
+  const { sessionAgentId } = resolveSessionAgentIds({
+    sessionKey: params.sessionKey,
+    config: params.config,
+    agentId: params.agentId,
+  });
   const sandboxSessionKey =
     params.sandboxSessionKey?.trim() || params.sessionKey?.trim() || params.sessionId;
+  const explicitSandboxSessionKey = params.sandboxSessionKey?.trim();
+  const sandboxAgentId =
+    explicitSandboxSessionKey && parseAgentSessionKey(explicitSandboxSessionKey)
+      ? undefined
+      : sessionAgentId;
   const sandbox = await resolveSandboxContext({
     config: params.config,
+    ...(sandboxAgentId ? { agentId: sandboxAgentId } : {}),
     sessionKey: sandboxSessionKey,
     workspaceDir: resolvedWorkspace,
   });
@@ -913,11 +924,6 @@ export async function runEmbeddedAttempt(
     }
     return resolvedHandle;
   };
-  const { sessionAgentId } = resolveSessionAgentIds({
-    sessionKey: params.sessionKey,
-    config: params.config,
-    agentId: params.agentId,
-  });
   const effectiveFsWorkspaceOnly = resolveAttemptFsWorkspaceOnly({
     config: params.config,
     sessionAgentId,

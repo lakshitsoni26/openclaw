@@ -74,6 +74,7 @@ export function resolveCodexAppServerDirectSandboxBypassBlock(params: {
   method: string;
   requestParams?: unknown;
   config?: OpenClawConfig;
+  agentId?: string;
   sessionKey?: string;
   sessionId?: string;
 }): string | undefined {
@@ -81,6 +82,7 @@ export function resolveCodexAppServerDirectSandboxBypassBlock(params: {
   if (NODE_EXEC_BLOCKED_CONTROL_PLANE_METHODS.has(params.method)) {
     const nodeExecBlock = resolveCodexNativeNodeExecBlock({
       config: params.config,
+      agentId: params.agentId,
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
       surface: `app-server method \`${params.method}\``,
@@ -94,6 +96,7 @@ export function resolveCodexAppServerDirectSandboxBypassBlock(params: {
   }
   const nodeExecBlock = resolveCodexNativeNodeExecBlock({
     config: params.config,
+    agentId: params.agentId,
     sessionKey: params.sessionKey,
     sessionId: params.sessionId,
     surface: `app-server method \`${params.method}\``,
@@ -107,6 +110,7 @@ export function resolveCodexAppServerDirectSandboxBypassBlock(params: {
   }
   const sandboxBlock = resolveCodexNativeSandboxBlock({
     config: params.config,
+    agentId: params.agentId,
     sessionKey,
     surface: `app-server method \`${params.method}\``,
   });
@@ -125,6 +129,7 @@ export function resolveCodexAppServerDirectSandboxBypassBlock(params: {
 /** Resolves the generic native-execution block for sandboxed or node-hosted sessions. */
 export function resolveCodexNativeExecutionBlock(params: {
   config?: OpenClawConfig;
+  agentId?: string;
   sessionKey?: string;
   sessionId?: string;
   surface: string;
@@ -135,6 +140,7 @@ export function resolveCodexNativeExecutionBlock(params: {
 /** Returns a block message when native Codex execution cannot honor active sandboxing. */
 export function resolveCodexNativeSandboxBlock(params: {
   config?: OpenClawConfig;
+  agentId?: string;
   sessionKey?: string;
   sessionId?: string;
   surface: string;
@@ -145,6 +151,7 @@ export function resolveCodexNativeSandboxBlock(params: {
   }
   const runtime = resolveSandboxRuntimeStatus({
     cfg: params.config,
+    agentId: params.agentId,
     sessionKey,
   });
   if (!runtime.sandboxed) {
@@ -197,6 +204,7 @@ function formatCodexNativeSandboxBlock(params: { surface: string }): string {
 
 function resolveCodexNativeNodeExecBlock(params: {
   config?: OpenClawConfig;
+  agentId?: string;
   sessionKey?: string;
   sessionId?: string;
   surface: string;
@@ -204,6 +212,7 @@ function resolveCodexNativeNodeExecBlock(params: {
   const sessionKey = params.sessionKey?.trim() || params.sessionId?.trim();
   const policy = resolveCodexNativeExecutionPolicy({
     config: params.config,
+    agentId: params.agentId,
     sessionKey,
     readRuntimeSessionEntry: Boolean(sessionKey),
   });

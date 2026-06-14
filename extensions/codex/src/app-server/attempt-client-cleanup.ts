@@ -2,13 +2,125 @@
  * Best-effort cleanup helpers for timed-out or aborted Codex app-server turns.
  */
 import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
-import type { CodexAppServerClient } from "./client.js";
-import { retireSharedCodexAppServerClientIfCurrent } from "./shared-client.js";
+import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
+import { isJsonObject, readCodexThreadCreationResponseId } from "./protocol.js";
+import type { CodexAppServerClientLease } from "./shared-client.js";
 
 /** Timeout for best-effort app-server turn interruption during cleanup. */
 export const CODEX_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
 /** Timeout for best-effort thread unsubscribe during cleanup. */
 export const CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS = 5_000;
+
+/** The connection's thread-subscription ownership can no longer be proven. */
+export class CodexAppServerUnsafeSubscriptionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CodexAppServerUnsafeSubscriptionError";
+  }
+}
+
+export function isCodexAppServerUnsafeSubscriptionError(
+  error: unknown,
+): error is CodexAppServerUnsafeSubscriptionError {
+  return error instanceof CodexAppServerUnsafeSubscriptionError;
+}
+
+/** A resume response may only describe the thread this connection retained. */
+export function assertCodexThreadResumeSubscription(
+  requestedThreadId: string,
+  returnedThreadId: string,
+): void {
+  if (returnedThreadId !== requestedThreadId) {
+    throw new CodexAppServerUnsafeSubscriptionError(
+      `Codex thread/resume returned ${returnedThreadId} for ${requestedThreadId}`,
+    );
+  }
+}
+
+/** Retires the exact client lease when turn acceptance is ambiguous. */
+export async function runCodexTurnStartWithLease<T>(
+  lease: CodexAppServerClientLease,
+  startTurn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await startTurn();
+  } catch (error) {
+    // Structured RPC rejection happens before Codex accepts the turn. Transport,
+    // timeout, and abort failures may hide an accepted turn with an unknown id.
+    if (!(error instanceof CodexAppServerRpcError)) {
+      await lease.abandon();
+    }
+    throw error;
+  }
+}
+
+/** Retries once when native work wins the race immediately before turn/start. */
+export async function runCodexTurnStartWithNativeTurnRetry<T>(params: {
+  startTurn: () => Promise<T>;
+  waitForActiveTurnCompletion: () => Promise<boolean>;
+  afterActiveTurnCompletion?: () => Promise<void>;
+  onRetry?: () => void;
+}): Promise<T> {
+  try {
+    return await params.startTurn();
+  } catch (error) {
+    if (!isCodexActiveTurnNotSteerableError(error)) {
+      throw error;
+    }
+    params.onRetry?.();
+    if (!(await params.waitForActiveTurnCompletion())) {
+      throw error;
+    }
+    await params.afterActiveTurnCompletion?.();
+    return await params.startTurn();
+  }
+}
+
+/** True for Codex's structured rejection when native work already owns the thread. */
+export function isCodexActiveTurnNotSteerableError(error: unknown): boolean {
+  if (!(error instanceof CodexAppServerRpcError) || !isJsonObject(error.data)) {
+    return false;
+  }
+  const info = error.data.codexErrorInfo;
+  return isJsonObject(info) && isJsonObject(info.activeTurnNotSteerable);
+}
+
+/** Validates a create response and retires the client unless cleanup is confirmed. */
+export async function validateCodexThreadCreationResponse<T>(
+  owner: {
+    client: CodexAppServerClient;
+    abandon?: () => Promise<void>;
+  },
+  response: unknown,
+  validate: (value: unknown) => T,
+): Promise<T> {
+  try {
+    return validate(response);
+  } catch (error) {
+    const threadId = readCodexThreadCreationResponseId(response);
+    const released = threadId
+      ? await unsubscribeCodexThreadBestEffort(owner.client, {
+          threadId,
+          timeoutMs: CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
+        })
+      : false;
+    if (released) {
+      throw error;
+    }
+    try {
+      await owner.abandon?.();
+    } catch (abandonError) {
+      throw new CodexAppServerUnsafeSubscriptionError(
+        "Codex thread creation response was invalid and its client could not be retired",
+        { cause: abandonError },
+      );
+    }
+    throw new CodexAppServerUnsafeSubscriptionError(
+      "Codex thread creation response was invalid and its subscription could not be released",
+      { cause: error },
+    );
+  }
+}
 
 /** Sends a turn interrupt without blocking abort cleanup on app-server errors. */
 export function interruptCodexTurnBestEffort(
@@ -36,26 +148,57 @@ export function interruptCodexTurnBestEffort(
   }
 }
 
-/** Unsubscribes from a thread while swallowing cleanup-only failures. */
+/** Unsubscribes from a thread and reports whether wire cleanup was confirmed. */
 export async function unsubscribeCodexThreadBestEffort(
   client: CodexAppServerClient,
   params: {
     threadId: string;
     timeoutMs: number;
   },
-): Promise<void> {
+): Promise<boolean> {
   try {
     await client.request(
       "thread/unsubscribe",
       { threadId: params.threadId },
       { timeoutMs: params.timeoutMs },
     );
+    return true;
   } catch (error) {
     embeddedAgentLog.debug("codex app-server thread unsubscribe cleanup failed", {
       threadId: params.threadId,
       error,
     });
+    return false;
   }
+}
+
+/** Returns one exact client lease to the pool only after subscription cleanup succeeds. */
+export async function settleCodexAppServerClientLease(
+  lease: CodexAppServerClientLease,
+  params: {
+    threadId?: string;
+    threadIds?: Iterable<string>;
+    timeoutMs: number;
+    abandon?: boolean;
+  },
+): Promise<void> {
+  if (params.abandon) {
+    await lease.abandon();
+    return;
+  }
+  const threadIds = params.threadIds ?? (params.threadId ? [params.threadId] : []);
+  for (const threadId of threadIds) {
+    if (
+      !(await unsubscribeCodexThreadBestEffort(lease.client, {
+        threadId,
+        timeoutMs: params.timeoutMs,
+      }))
+    ) {
+      await lease.abandon();
+      return;
+    }
+  }
+  lease.release();
 }
 
 /**
@@ -68,10 +211,9 @@ export async function retireCodexAppServerClientAfterTimedOutTurn(
     threadId: string;
     turnId: string;
     reason: string;
+    abandonClientLease: () => Promise<void>;
   },
 ): Promise<void> {
-  const retiredSharedClient = retireSharedCodexAppServerClientIfCurrent(client);
-  const detachedSharedClient = Boolean(retiredSharedClient);
   interruptCodexTurnBestEffort(client, {
     threadId: params.threadId,
     turnId: params.turnId,
@@ -81,28 +223,10 @@ export async function retireCodexAppServerClientAfterTimedOutTurn(
     threadId: params.threadId,
     timeoutMs: CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
   });
-  let closedClient = retiredSharedClient?.closed ?? false;
-  if (!detachedSharedClient) {
-    const close = (client as { close?: () => void }).close;
-    if (typeof close === "function") {
-      try {
-        close.call(client);
-        closedClient = true;
-      } catch (error) {
-        embeddedAgentLog.debug("codex app-server client close failed during timeout cleanup", {
-          threadId: params.threadId,
-          turnId: params.turnId,
-          error,
-        });
-      }
-    }
-  }
+  await params.abandonClientLease();
   embeddedAgentLog.warn("codex app-server client retired after timed-out turn", {
     threadId: params.threadId,
     turnId: params.turnId,
     reason: params.reason,
-    detachedSharedClient,
-    closedClient,
-    activeSharedClientLeases: retiredSharedClient?.activeLeases ?? 0,
   });
 }

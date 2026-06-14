@@ -99,6 +99,7 @@ describe("agent harness registry", () => {
     });
 
     await resetRegisteredAgentHarnessSessions({
+      agentId: "main",
       sessionId: "session-1",
       sessionKey: "agent:main:session-1",
       sessionFile: "/tmp/session.jsonl",
@@ -107,6 +108,7 @@ describe("agent harness registry", () => {
 
     expect(resets).toEqual([
       {
+        agentId: "main",
         sessionId: "session-1",
         sessionKey: "agent:main:session-1",
         sessionFile: "/tmp/session.jsonl",

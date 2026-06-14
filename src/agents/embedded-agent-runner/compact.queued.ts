@@ -288,24 +288,6 @@ export async function compactEmbeddedAgentSession(
     contextEnginePluginId: resolveContextEngineOwnerPluginId(contextEngine),
   });
   const contextEngineOwnsCompaction = contextEngine.info.ownsCompaction === true;
-  const harnessResult =
-    attemptNativeHarnessCompaction && !contextEngineOwnsCompaction
-      ? await maybeCompactAgentHarnessSession({
-          ...params,
-          contextEngine,
-          contextTokenBudget,
-          contextEngineRuntimeContext,
-        })
-      : undefined;
-  if (harnessResult) {
-    if (!shouldFallbackAfterHarnessCompaction(harnessResult)) {
-      await contextEngine.dispose?.();
-      return harnessResult;
-    }
-    log.warn(
-      `native harness compaction could not use its session binding; falling back to context engine: ${harnessResult.reason ?? "unknown"}`,
-    );
-  }
   if (
     shouldDeferOwningContextEngineBudgetCompaction({
       compactParams: params,
@@ -327,6 +309,23 @@ export async function compactEmbeddedAgentSession(
       let checkpointSnapshot: CapturedCompactionCheckpointSnapshot | null | undefined;
       let checkpointSnapshotRetained = false;
       try {
+        const harnessResult =
+          attemptNativeHarnessCompaction && !contextEngineOwnsCompaction
+            ? await maybeCompactAgentHarnessSession({
+                ...params,
+                contextEngine,
+                contextTokenBudget,
+                contextEngineRuntimeContext,
+              })
+            : undefined;
+        if (harnessResult) {
+          if (!shouldFallbackAfterHarnessCompaction(harnessResult)) {
+            return harnessResult;
+          }
+          log.warn(
+            `native harness compaction could not use its session binding; falling back to context engine: ${harnessResult.reason ?? "unknown"}`,
+          );
+        }
         // When the context engine owns compaction, its compact() implementation
         // bypasses compactEmbeddedAgentSessionDirect (which fires the hooks internally).
         // Fire before_compaction / after_compaction hooks here so plugin subscribers
@@ -514,6 +513,9 @@ export async function compactEmbeddedAgentSession(
                 compactedCount: -1,
                 tokenCount: result.result?.tokensAfter,
                 sessionFile: postCompactionSessionFile,
+                ...(postCompactionSessionId !== params.sessionId
+                  ? { previousSessionId: params.sessionId }
+                  : {}),
               },
               afterHookCtx,
             );

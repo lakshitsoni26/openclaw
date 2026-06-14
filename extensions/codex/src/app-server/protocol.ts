@@ -105,6 +105,7 @@ export type CodexThreadResumeParams = JsonObject & {
   serviceTier?: CodexServiceTier | null;
   config?: JsonObject;
   developerInstructions?: string;
+  excludeTurns?: boolean;
   /** Retired by Codex 0.137, but still sent for supported custom app-server 0.125-0.136. */
   persistExtendedHistory?: boolean;
 };
@@ -112,7 +113,10 @@ export type CodexThreadResumeParams = JsonObject & {
 export type CodexThreadStartResponse = {
   thread: CodexThread;
   model: string;
-  modelProvider?: string | null;
+  modelProvider: string;
+  approvalPolicy: string | JsonObject;
+  approvalsReviewer: string;
+  sandbox: CodexSandboxPolicy;
 };
 
 export type CodexThreadForkParams = CodexThreadStartParams & {
@@ -128,7 +132,22 @@ export type CodexThreadForkResponse = CodexThreadStartResponse;
 export type CodexThreadResumeResponse = {
   thread: CodexThread;
   model: string;
-  modelProvider?: string | null;
+  modelProvider: string;
+  approvalPolicy: string | JsonObject;
+  approvalsReviewer: string;
+  sandbox: CodexSandboxPolicy;
+};
+
+export type CodexThreadReadParams = JsonObject & {
+  threadId: string;
+  includeTurns?: boolean;
+};
+
+export type CodexThreadReadResponse = {
+  thread: CodexThread & {
+    parentThreadId?: string | null;
+    turns?: JsonObject[];
+  };
 };
 
 export type CodexThreadInjectItemsParams = JsonObject & {
@@ -173,11 +192,10 @@ export type CodexTurnStartResponse = {
 
 export type CodexTurn = {
   id: string;
-  threadId: string;
   status?: string;
   error?: CodexErrorNotification["error"];
-  startedAt?: string | null;
-  completedAt?: string | null;
+  startedAt?: number | null;
+  completedAt?: number | null;
   durationMs?: number | null;
   items: CodexThreadItem[];
 };
@@ -195,6 +213,7 @@ export type CodexThread = {
   threadSource?: string | null;
   agentNickname?: string | null;
   agentRole?: string | null;
+  turns: CodexTurn[];
 };
 
 export type CodexThreadStatus =
@@ -524,6 +543,7 @@ type CodexAppServerRequestParamsOverride = {
   "environment/add": { environmentId: string; execServerUrl: string };
   "thread/fork": CodexThreadForkParams;
   "thread/inject_items": CodexThreadInjectItemsParams;
+  "thread/read": CodexThreadReadParams;
   "thread/start": CodexThreadStartParams;
   "thread/unsubscribe": CodexThreadUnsubscribeParams;
   "turn/interrupt": CodexTurnInterruptParams;
@@ -551,6 +571,7 @@ type CodexAppServerRequestResultMap = {
   "thread/fork": CodexThreadForkResponse;
   "thread/inject_items": JsonValue;
   "thread/list": JsonValue;
+  "thread/read": CodexThreadReadResponse;
   "thread/resume": CodexThreadResumeResponse;
   "thread/start": CodexThreadStartResponse;
   "thread/unsubscribe": JsonValue;
@@ -561,6 +582,14 @@ type CodexAppServerRequestResultMap = {
 
 export function isJsonObject(value: unknown): value is JsonObject {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/** Reads the thread identity whose subscription the client retained on create. */
+export function readCodexThreadCreationResponseId(value: unknown): string | undefined {
+  if (!isJsonObject(value) || !isJsonObject(value.thread) || typeof value.thread.id !== "string") {
+    return undefined;
+  }
+  return value.thread.id.trim() || undefined;
 }
 
 export function isRpcResponse(message: RpcMessage): message is RpcResponse {

@@ -9,16 +9,17 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addSandboxShellDynamicToolsIfAvailable,
-  buildDynamicTools,
   filterCodexDynamicToolsForAllowlist,
   hasWildcardCodexToolsAllow,
   includeForcedCodexDynamicToolAllow,
+  prepareDynamicToolCatalog,
   resetOpenClawCodingToolsFactoryForTests,
   resolveOpenClawCodingToolsSessionKeys,
   resolveCodexMessageToolProvider,
   setOpenClawCodingToolsFactoryForTests,
   shouldEnableCodexAppServerNativeToolSurface,
   shouldForceMessageTool,
+  type OpenClawCodingToolsFactory,
 } from "./dynamic-tool-build.js";
 import {
   filterCodexDynamicTools,
@@ -100,13 +101,13 @@ function createRuntimeDynamicTool(name: string): RuntimeDynamicToolForTest {
 async function buildDynamicToolsForTest(
   params: EmbeddedRunAttemptParams,
   workspaceDir: string,
-  options: Partial<Parameters<typeof buildDynamicTools>[0]> = {},
+  options: Partial<Parameters<typeof prepareDynamicToolCatalog>[0]> = {},
 ) {
   const sandboxSessionKey = params.sessionKey;
   if (!sandboxSessionKey) {
     throw new Error("createParams must provide a sessionKey for Codex dynamic tool tests.");
   }
-  return buildDynamicTools({
+  const catalog = await prepareDynamicToolCatalog({
     params,
     resolvedWorkspace: workspaceDir,
     effectiveWorkspace: workspaceDir,
@@ -119,6 +120,7 @@ async function buildDynamicToolsForTest(
     onYieldDetected: () => undefined,
     ...options,
   });
+  return catalog.tools;
 }
 
 describe("Codex app-server dynamic tool build", () => {
@@ -166,6 +168,53 @@ describe("Codex app-server dynamic tool build", () => {
       "message",
       "heartbeat_respond",
       "sessions_spawn",
+    ]);
+  });
+
+  it("prepares runtime and durable tool views from one OpenClaw catalog", async () => {
+    const messageTool = createRuntimeDynamicTool("message");
+    const webSearchTool = createRuntimeDynamicTool("web_search");
+    const heartbeatTool = createRuntimeDynamicTool("heartbeat_respond");
+    const factory = vi.fn<OpenClawCodingToolsFactory>((options) => [
+      messageTool,
+      webSearchTool,
+      ...(options?.enableHeartbeatTool ? [heartbeatTool] : []),
+    ]);
+    setOpenClawCodingToolsFactoryForTests(factory);
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(sessionFile, workspaceDir);
+    params.disableTools = false;
+    const runtimePlan = createCodexRuntimePlanFixture();
+    params.runtimePlan = {
+      ...runtimePlan,
+      tools: {
+        normalize: (tools: Array<{ name: string }>) =>
+          tools.filter((tool) => tool.name === "message"),
+        logDiagnostics: () => undefined,
+      },
+    } as unknown as NonNullable<EmbeddedRunAttemptParams["runtimePlan"]>;
+
+    const catalog = await prepareDynamicToolCatalog({
+      params,
+      resolvedWorkspace: workspaceDir,
+      effectiveWorkspace: workspaceDir,
+      sandboxSessionKey: params.sessionKey ?? "agent:main:session-1",
+      sandbox: { enabled: false, backendId: "docker" } as never,
+      nativeToolSurfaceEnabled: true,
+      runAbortController: new AbortController(),
+      sessionAgentId: "main",
+      pluginConfig: {},
+      onYieldDetected: () => undefined,
+    });
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(factory.mock.calls[0]?.[0]?.enableHeartbeatTool).toBe(true);
+    expect(catalog.tools.map((tool) => tool.name)).toEqual(["message"]);
+    expect(catalog.registeredTools.map((tool) => tool.name)).toEqual([
+      "message",
+      "web_search",
+      "heartbeat_respond",
     ]);
   });
 

@@ -18,6 +18,7 @@ import type {
   PluginStateEntry,
   PluginStateKeyedStore,
   PluginStateSyncKeyedStore,
+  PluginStateOverflowPolicy,
   PluginStateStoreOperation,
 } from "./plugin-state-store.types.js";
 import { PluginStateStoreError } from "./plugin-state-store.types.js";
@@ -28,6 +29,7 @@ export type {
   OpenKeyedStoreOptions,
   PluginStateEntry,
   PluginStateKeyedStore,
+  PluginStateOverflowPolicy,
   PluginStateSyncKeyedStore,
   PluginStateStoreErrorCode,
   PluginStateStoreOperation,
@@ -53,6 +55,7 @@ const MAX_JSON_DEPTH = 64;
 
 type StoreOptionSignature = {
   maxEntries: number;
+  overflowPolicy: PluginStateOverflowPolicy;
   defaultTtlMs?: number;
 };
 
@@ -109,6 +112,16 @@ function validateMaxEntries(value: number): number {
     throw invalidInput("plugin state maxEntries must be an integer >= 1", "open");
   }
   return value;
+}
+
+function validateOverflowPolicy(value: unknown): PluginStateOverflowPolicy {
+  if (value === undefined || value === "evict-oldest") {
+    return "evict-oldest";
+  }
+  if (value === "reject-new") {
+    return value;
+  }
+  throw invalidInput("plugin state overflowPolicy must be evict-oldest or reject-new", "open");
 }
 
 function validateOptionalTtlMs(
@@ -241,6 +254,7 @@ function assertConsistentOptions(
   }
   if (
     existing.maxEntries !== signature.maxEntries ||
+    existing.overflowPolicy !== signature.overflowPolicy ||
     existing.defaultTtlMs !== signature.defaultTtlMs
   ) {
     // A namespace is a shared storage contract. Reopening it with different
@@ -258,9 +272,10 @@ function createKeyedStoreForPluginId<T>(
 ): PluginStateKeyedStore<T> {
   const namespace = validateNamespace(options.namespace);
   const maxEntries = validateMaxEntries(options.maxEntries);
+  const overflowPolicy = validateOverflowPolicy(options.overflowPolicy);
   const defaultTtlMs = validateOptionalTtlMs(options.defaultTtlMs);
   const env = options.env;
-  assertConsistentOptions(pluginId, namespace, { maxEntries, defaultTtlMs });
+  assertConsistentOptions(pluginId, namespace, { maxEntries, overflowPolicy, defaultTtlMs });
 
   return {
     async register(key, value, opts) {
@@ -271,6 +286,7 @@ function createKeyedStoreForPluginId<T>(
         key: params.key,
         valueJson: params.valueJson,
         maxEntries,
+        overflowPolicy,
         ...(env ? { env } : {}),
         ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
       });
@@ -283,6 +299,7 @@ function createKeyedStoreForPluginId<T>(
         key: params.key,
         valueJson: params.valueJson,
         maxEntries,
+        overflowPolicy,
         ...(env ? { env } : {}),
         ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
       });
@@ -294,6 +311,7 @@ function createKeyedStoreForPluginId<T>(
         namespace,
         key: normalizedKey,
         maxEntries,
+        overflowPolicy,
         updateValueJson: (current) => {
           const next = updateValue(current as T | undefined);
           if (next === undefined) {
@@ -354,9 +372,10 @@ function createSyncKeyedStoreForPluginId<T>(
 ): PluginStateSyncKeyedStore<T> {
   const namespace = validateNamespace(options.namespace);
   const maxEntries = validateMaxEntries(options.maxEntries);
+  const overflowPolicy = validateOverflowPolicy(options.overflowPolicy);
   const defaultTtlMs = validateOptionalTtlMs(options.defaultTtlMs);
   const env = options.env;
-  assertConsistentOptions(pluginId, namespace, { maxEntries, defaultTtlMs });
+  assertConsistentOptions(pluginId, namespace, { maxEntries, overflowPolicy, defaultTtlMs });
 
   return {
     register(key, value, opts) {
@@ -367,6 +386,7 @@ function createSyncKeyedStoreForPluginId<T>(
         key: params.key,
         valueJson: params.valueJson,
         maxEntries,
+        overflowPolicy,
         ...(env ? { env } : {}),
         ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
       });
@@ -379,6 +399,7 @@ function createSyncKeyedStoreForPluginId<T>(
         key: params.key,
         valueJson: params.valueJson,
         maxEntries,
+        overflowPolicy,
         ...(env ? { env } : {}),
         ...(params.ttlMs != null ? { ttlMs: params.ttlMs } : {}),
       });
@@ -390,6 +411,7 @@ function createSyncKeyedStoreForPluginId<T>(
         namespace,
         key: normalizedKey,
         maxEntries,
+        overflowPolicy,
         updateValueJson: (current) => {
           const next = updateValue(current as T | undefined);
           if (next === undefined) {

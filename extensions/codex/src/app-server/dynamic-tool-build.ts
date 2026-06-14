@@ -38,6 +38,9 @@ type OpenClawCodingToolsOptions = NonNullable<
 export type OpenClawCodingToolsFactory =
   (typeof import("openclaw/plugin-sdk/agent-harness"))["createOpenClawCodingTools"];
 type OpenClawDynamicTool = ReturnType<OpenClawCodingToolsFactory>[number];
+type OpenClawDynamicToolProjection = ReturnType<
+  typeof filterProviderNormalizableTools<OpenClawDynamicTool>
+>;
 type OpenClawSandboxContext = Awaited<ReturnType<typeof resolveSandboxContext>>;
 type CodexDynamicToolBuildEvent = Parameters<
   NonNullable<EmbeddedRunAttemptParams["onAgentEvent"]>
@@ -52,6 +55,7 @@ const CODEX_NATIVE_SANDBOX_TOOL_REQUIREMENTS = [
   "apply_patch",
 ] as const;
 const CODEX_MEMORY_FLUSH_DYNAMIC_TOOL_ALLOW = new Set(["read", "write"]);
+const CODEX_HEARTBEAT_DYNAMIC_TOOL_NAME = "heartbeat_respond";
 
 /** Runtime inputs needed to derive the exact Codex dynamic tool surface for a turn. */
 export type DynamicToolBuildParams = {
@@ -66,8 +70,6 @@ export type DynamicToolBuildParams = {
   sessionAgentId: string;
   pluginConfig: CodexPluginConfig;
   profilerEnabled?: boolean;
-  forceHeartbeatTool?: boolean;
-  ignoreRuntimePlan?: boolean;
   onYieldDetected: () => void;
   onCodexAppServerEvent?: (event: CodexDynamicToolBuildEvent) => void;
 };
@@ -126,6 +128,11 @@ type CodexDynamicToolBuildStageTiming = {
 type CodexDynamicToolBuildStageSummary = {
   totalMs: number;
   stages: CodexDynamicToolBuildStageTiming[];
+};
+
+type CodexDynamicToolBuildStageTracker = {
+  mark: (name: string) => void;
+  snapshot: () => CodexDynamicToolBuildStageSummary;
 };
 
 const CODEX_DYNAMIC_TOOL_BUILD_WARN_TOTAL_MS = 1_000;
@@ -189,17 +196,42 @@ export function formatCodexDynamicToolBuildStageSummary(
     : "none";
 }
 
-/** Builds, filters, and normalizes Codex-compatible runtime tools for a single turn. */
-export async function buildDynamicTools(input: DynamicToolBuildParams) {
+/** Builds the turn-visible and durable registration views from one OpenClaw tool catalog. */
+export async function prepareDynamicToolCatalog(input: DynamicToolBuildParams): Promise<{
+  tools: OpenClawDynamicTool[];
+  registeredTools: OpenClawDynamicTool[];
+}> {
   const { params } = input;
   if (params.disableTools || !supportsModelTools(params.model)) {
-    return [];
+    return { tools: [], registeredTools: [] };
   }
-  // Dynamic tool construction is on the reply hot path, so per-stage
-  // Date.now/span bookkeeping runs only when the Codex profiler flag is set.
   const toolBuildStages = createCodexDynamicToolBuildStageTracker({
     enabled: input.profilerEnabled,
   });
+  // The durable schema must include heartbeat_respond across normal and heartbeat
+  // turns. Build that superset once, then hide it only from normal turn exposure.
+  const allTools = await buildOpenClawDynamicToolSource(input, toolBuildStages);
+  const readableTools = filterProviderNormalizableTools(allTools);
+  toolBuildStages.mark("provider-normalization");
+  const tools = projectDynamicTools(input, readableTools, toolBuildStages, {
+    excludeHeartbeatTool: params.trigger !== "heartbeat",
+    phase: "runtime-tools",
+    stagePrefix: "runtime",
+  });
+  const registeredTools = projectDynamicTools(input, readableTools, toolBuildStages, {
+    ignoreRuntimePlan: true,
+    phase: "registered-tools",
+    reportDiagnostics: false,
+    stagePrefix: "registered",
+  });
+  return { tools, registeredTools };
+}
+
+async function buildOpenClawDynamicToolSource(
+  input: DynamicToolBuildParams,
+  toolBuildStages: CodexDynamicToolBuildStageTracker,
+): Promise<OpenClawDynamicTool[]> {
+  const { params } = input;
   const modelHasVision = params.model.input?.includes("image") ?? false;
   const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, input.sessionAgentId);
   const createOpenClawCodingTools =
@@ -278,8 +310,8 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
     disableMessageTool: params.disableMessageTool,
     forceMessageTool: shouldForceMessageTool(params),
-    enableHeartbeatTool: params.trigger === "heartbeat" || input.forceHeartbeatTool === true,
-    forceHeartbeatTool: params.trigger === "heartbeat" || input.forceHeartbeatTool === true,
+    enableHeartbeatTool: true,
+    forceHeartbeatTool: true,
     onYield: (message) => {
       input.onYieldDetected();
       input.onCodexAppServerEvent?.({
@@ -292,10 +324,30 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     },
   });
   toolBuildStages.mark("create-openclaw-coding-tools");
-  const preNormalizationDiagnostics: RuntimeToolSchemaDiagnostic[] = [];
-  const readableAllToolProjection = filterProviderNormalizableTools(allTools);
-  preNormalizationDiagnostics.push(...readableAllToolProjection.diagnostics);
-  const readableAllTools = [...readableAllToolProjection.tools];
+  return allTools;
+}
+
+function projectDynamicTools(
+  input: DynamicToolBuildParams,
+  source: OpenClawDynamicToolProjection,
+  toolBuildStages: CodexDynamicToolBuildStageTracker,
+  options: {
+    excludeHeartbeatTool?: boolean;
+    ignoreRuntimePlan?: boolean;
+    phase?: "runtime-tools" | "registered-tools";
+    reportDiagnostics?: boolean;
+    stagePrefix?: string;
+  } = {},
+): OpenClawDynamicTool[] {
+  const { params } = input;
+  const markStage = (name: string) =>
+    toolBuildStages.mark(options.stagePrefix ? `${options.stagePrefix}-${name}` : name);
+  const preNormalizationDiagnostics: RuntimeToolSchemaDiagnostic[] = [...source.diagnostics];
+  const readableAllTools = [...source.tools].filter(
+    (tool) =>
+      !options.excludeHeartbeatTool ||
+      normalizeCodexDynamicToolName(tool.name) !== CODEX_HEARTBEAT_DYNAMIC_TOOL_NAME,
+  );
   const codexFilteredTools = addNodeShellDynamicToolsIfNeeded(
     addSandboxShellDynamicToolsIfAvailable(
       isCodexMemoryFlushRun(params)
@@ -307,17 +359,18 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     readableAllTools,
     input,
   );
-  toolBuildStages.mark("codex-filtering");
+  markStage("codex-filtering");
+  const modelHasVision = params.model.input?.includes("image") ?? false;
   const visionFilteredTools = filterToolsForVisionInputs(codexFilteredTools, {
     modelHasVision,
     hasInboundImages: (params.images?.length ?? 0) > 0,
   });
-  toolBuildStages.mark("vision-filtering");
+  markStage("vision-filtering");
   const toolsAllow = includeForcedCodexDynamicToolAllow(params.toolsAllow, params);
   const filteredTools = filterCodexDynamicToolsForAllowlist(visionFilteredTools, toolsAllow);
-  toolBuildStages.mark("allowlist-filter");
+  markStage("allowlist-filter");
   const normalizedTools = normalizeAgentRuntimeTools({
-    runtimePlan: input.ignoreRuntimePlan ? undefined : params.runtimePlan,
+    runtimePlan: options.ignoreRuntimePlan ? undefined : params.runtimePlan,
     tools: filteredTools,
     provider: params.provider,
     config: params.config,
@@ -326,11 +379,14 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     modelId: params.modelId,
     modelApi: params.model.api,
     model: params.model,
+    // Registration is a projection of the already-prepared catalog. Never
+    // activate another provider runtime while constructing its durable schema.
+    allowProviderRuntimePluginLoad: options.ignoreRuntimePlan ? false : undefined,
     onPreNormalizationSchemaDiagnostics: (diagnostics) =>
       preNormalizationDiagnostics.push(...diagnostics),
   });
-  toolBuildStages.mark("runtime-normalization");
-  if (preNormalizationDiagnostics.length > 0) {
+  markStage("runtime-normalization");
+  if (options.reportDiagnostics !== false && preNormalizationDiagnostics.length > 0) {
     embeddedAgentLog.warn(
       `codex app-server quarantined ${preNormalizationDiagnostics.length} unsupported runtime tool schema${preNormalizationDiagnostics.length === 1 ? "" : "s"} before dynamic tool registration`,
       {
@@ -347,7 +403,7 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
   }
   const summary = toolBuildStages.snapshot();
   if (shouldWarnCodexDynamicToolBuildStageSummary(summary)) {
-    const phase = input.forceHeartbeatTool ? "registered-tools" : "runtime-tools";
+    const phase = options.phase ?? "runtime-tools";
     embeddedAgentLog.warn(
       `codex app-server dynamic tool build timings runId=${params.runId} sessionId=${params.sessionId} phase=${phase} totalMs=${summary.totalMs} stages=${formatCodexDynamicToolBuildStageSummary(summary)}`,
       {
@@ -361,8 +417,7 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
         visionFilteredToolCount: visionFilteredTools.length,
         filteredToolCount: filteredTools.length,
         normalizedToolCount: normalizedTools.length,
-        forceHeartbeatTool: input.forceHeartbeatTool === true,
-        ignoreRuntimePlan: input.ignoreRuntimePlan === true,
+        ignoreRuntimePlan: options.ignoreRuntimePlan === true,
         nativeToolSurfaceEnabled: input.nativeToolSurfaceEnabled === true,
       },
     );

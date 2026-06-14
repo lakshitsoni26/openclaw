@@ -4,7 +4,12 @@
  */
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolveSandboxRuntimeStatus } from "openclaw/plugin-sdk/sandbox";
-import { getSessionEntry, type SessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+  type SessionEntry,
+} from "openclaw/plugin-sdk/session-store-runtime";
 
 type ExecHost = "sandbox" | "gateway" | "node";
 type ExecTarget = "auto" | ExecHost;
@@ -44,20 +49,21 @@ export function resolveCodexNativeExecutionPolicy(params: {
 }): CodexNativeExecutionPolicy {
   const config = params.config ?? {};
   const sessionKey = params.sessionKey?.trim() || params.sessionId?.trim() || undefined;
+  const agentId = resolvePolicyAgentId({ config, sessionKey, agentId: params.agentId });
   const sessionEntry =
     params.sessionEntry ??
     (params.readRuntimeSessionEntry && sessionKey
-      ? readRuntimeSessionEntryBestEffort(sessionKey)
+      ? readRuntimeSessionEntryBestEffort(config, sessionKey, agentId)
       : undefined);
   const sandboxAvailable =
     params.sandboxAvailable ??
     (sessionKey
       ? resolveSandboxRuntimeStatus({
           cfg: config,
+          agentId,
           sessionKey,
         }).sandboxed
       : false);
-  const agentId = resolvePolicyAgentId({ config, sessionKey, agentId: params.agentId });
   const agentExec = resolvePolicyAgentExec({ config, agentId });
   const globalExec = config.tools?.exec;
   const requestedExecHost =
@@ -194,9 +200,17 @@ function resolveEffectiveExecHost(params: {
   return params.requestedExecHost;
 }
 
-function readRuntimeSessionEntryBestEffort(sessionKey: string): SessionEntry | undefined {
+function readRuntimeSessionEntryBestEffort(
+  config: OpenClawConfig,
+  sessionKey: string,
+  agentId: string,
+): SessionEntry | undefined {
   try {
-    return getSessionEntry({ sessionKey, hydrateSkillPromptRefs: false });
+    const storePath = resolveStorePath(config.session?.store, { agentId });
+    return resolveSessionStoreEntry({
+      store: loadSessionStore(storePath, { skipCache: true }),
+      sessionKey,
+    }).existing;
   } catch {
     return undefined;
   }

@@ -150,6 +150,11 @@ export type CodexAppServerRuntimeOptions = {
   serviceTier?: CodexServiceTier;
 };
 
+export type CodexAppServerRuntimeResolution = {
+  appServer: CodexAppServerRuntimeOptions;
+  modelBackedReviewerAvailable: boolean;
+};
+
 export type CodexModelBackedReviewerContext = {
   modelProvider?: string;
   model?: string;
@@ -405,25 +410,34 @@ export function resolveCodexPluginsPolicy(pluginConfig?: unknown): ResolvedCodex
   };
 }
 
+type CodexAppServerRuntimeParams = {
+  pluginConfig?: unknown;
+  execMode?: OpenClawExecMode;
+  execPolicy?: OpenClawExecPolicyForCodexAppServer;
+  modelProvider?: string;
+  model?: string;
+  config?: ProviderAuthAliasConfig;
+  env?: NodeJS.ProcessEnv;
+  agentDir?: string;
+  codexConfigToml?: string | null;
+  requirementsToml?: string | null;
+  requirementsPath?: string;
+  readRequirementsFile?: (path: string) => string | undefined;
+  platform?: NodeJS.Platform;
+  hostName?: string;
+  openClawSandboxActive?: boolean;
+};
+
 export function resolveCodexAppServerRuntimeOptions(
-  params: {
-    pluginConfig?: unknown;
-    execMode?: OpenClawExecMode;
-    execPolicy?: OpenClawExecPolicyForCodexAppServer;
-    modelProvider?: string;
-    model?: string;
-    config?: ProviderAuthAliasConfig;
-    env?: NodeJS.ProcessEnv;
-    agentDir?: string;
-    codexConfigToml?: string | null;
-    requirementsToml?: string | null;
-    requirementsPath?: string;
-    readRequirementsFile?: (path: string) => string | undefined;
-    platform?: NodeJS.Platform;
-    hostName?: string;
-    openClawSandboxActive?: boolean;
-  } = {},
+  params: CodexAppServerRuntimeParams = {},
 ): CodexAppServerRuntimeOptions {
+  return resolveCodexAppServerRuntime(params).appServer;
+}
+
+/** Resolves runtime options and the model-policy fact computed with them. */
+export function resolveCodexAppServerRuntime(
+  params: CodexAppServerRuntimeParams = {},
+): CodexAppServerRuntimeResolution {
   const env = params.env ?? process.env;
   const config = readCodexPluginConfig(params.pluginConfig).appServer ?? {};
   const transport = resolveTransport(config.transport);
@@ -547,43 +561,46 @@ export function resolveCodexAppServerRuntimeOptions(
         : "implicit";
 
   return {
-    start: {
-      transport,
-      command,
-      commandSource,
-      args: args.length > 0 ? args : ["app-server", "--listen", "stdio://"],
-      ...(url ? { url } : {}),
-      ...(authToken ? { authToken } : {}),
-      headers,
-      ...(transport === "stdio" && clearEnv.length > 0 ? { clearEnv } : {}),
+    modelBackedReviewerAvailable: canUseModelBackedReviewer,
+    appServer: {
+      start: {
+        transport,
+        command,
+        commandSource,
+        args: args.length > 0 ? args : ["app-server", "--listen", "stdio://"],
+        ...(url ? { url } : {}),
+        ...(authToken ? { authToken } : {}),
+        headers,
+        ...(transport === "stdio" && clearEnv.length > 0 ? { clearEnv } : {}),
+      },
+      codeModeOnly: config.codeModeOnly === true,
+      requestTimeoutMs: normalizePositiveNumber(config.requestTimeoutMs, 60_000),
+      turnCompletionIdleTimeoutMs: normalizePositiveNumber(
+        config.turnCompletionIdleTimeoutMs,
+        60_000,
+      ),
+      ...(config.postToolRawAssistantCompletionIdleTimeoutMs !== undefined
+        ? {
+            postToolRawAssistantCompletionIdleTimeoutMs: normalizePositiveNumber(
+              config.postToolRawAssistantCompletionIdleTimeoutMs,
+              60_000,
+            ),
+          }
+        : {}),
+      approvalPolicy: forcedPolicy?.approvalPolicy ?? approvalPolicy,
+      approvalPolicySource,
+      sandbox:
+        forcedPolicy?.sandbox ??
+        configuredSandbox ??
+        defaultPolicy?.sandbox ??
+        (policyMode === "guardian" ? "workspace-write" : "danger-full-access"),
+      approvalsReviewer:
+        forcedPolicy?.approvalsReviewer ??
+        explicitApprovalsReviewer ??
+        defaultPolicy?.approvalsReviewer ??
+        (policyMode === "guardian" ? "auto_review" : "user"),
+      ...(serviceTier ? { serviceTier } : {}),
     },
-    codeModeOnly: config.codeModeOnly === true,
-    requestTimeoutMs: normalizePositiveNumber(config.requestTimeoutMs, 60_000),
-    turnCompletionIdleTimeoutMs: normalizePositiveNumber(
-      config.turnCompletionIdleTimeoutMs,
-      60_000,
-    ),
-    ...(config.postToolRawAssistantCompletionIdleTimeoutMs !== undefined
-      ? {
-          postToolRawAssistantCompletionIdleTimeoutMs: normalizePositiveNumber(
-            config.postToolRawAssistantCompletionIdleTimeoutMs,
-            60_000,
-          ),
-        }
-      : {}),
-    approvalPolicy: forcedPolicy?.approvalPolicy ?? approvalPolicy,
-    approvalPolicySource,
-    sandbox:
-      forcedPolicy?.sandbox ??
-      configuredSandbox ??
-      defaultPolicy?.sandbox ??
-      (policyMode === "guardian" ? "workspace-write" : "danger-full-access"),
-    approvalsReviewer:
-      forcedPolicy?.approvalsReviewer ??
-      explicitApprovalsReviewer ??
-      defaultPolicy?.approvalsReviewer ??
-      (policyMode === "guardian" ? "auto_review" : "user"),
-    ...(serviceTier ? { serviceTier } : {}),
   };
 }
 
@@ -655,7 +672,6 @@ export function resolveCodexModelBackedReviewerPolicyContext(params: {
   model?: string;
   bindingModelProvider?: string;
   bindingModel?: string;
-  nativeAuthProfile?: boolean;
 }): CodexModelBackedReviewerContext {
   const provider = params.provider?.trim();
   if (provider && provider.toLowerCase() !== "codex") {
@@ -687,7 +703,7 @@ export function resolveCodexModelBackedReviewerPolicyContext(params: {
     };
   }
   return {
-    modelProvider: params.nativeAuthProfile === true ? "openai" : undefined,
+    modelProvider: undefined,
     model: params.model ?? params.bindingModel,
   };
 }
@@ -754,6 +770,7 @@ export function codexAppServerStartOptionsKey(
   options: CodexAppServerStartOptions,
   params: {
     authProfileId?: string;
+    authAccountCacheKey?: string;
     agentDir?: string;
     fallbackApiKeyCacheKey?: string;
   } = {},
@@ -773,6 +790,7 @@ export function codexAppServerStartOptionsKey(
       .map(([key, value]) => [key, hashSecretForKey(value, `env:${key}`)]),
     clearEnv: [...(options.clearEnv ?? [])].toSorted(),
     authProfileId: params.authProfileId ?? null,
+    authAccountCacheKey: params.authAccountCacheKey ?? null,
     agentDir: params.agentDir ?? null,
     fallbackApiKeyCacheKey: params.fallbackApiKeyCacheKey ?? null,
   });

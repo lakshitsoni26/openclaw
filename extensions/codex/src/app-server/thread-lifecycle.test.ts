@@ -5,7 +5,12 @@ import path from "node:path";
 import type { EmbeddedRunAttemptParams } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CODEX_GPT5_BEHAVIOR_CONTRACT } from "../../prompt-overlay.js";
-import { createCodexTestModel } from "./test-support.js";
+import {
+  resetCodexTestBindingStore,
+  registerCodexTestSessionIdentity,
+  testCodexAppServerBindingStore,
+} from "./session-binding.test-helpers.js";
+import { createCodexTestModel, ensureCodexTestClientNotificationSurface } from "./test-support.js";
 import {
   buildDeveloperInstructions,
   buildTurnCollaborationMode,
@@ -16,9 +21,27 @@ import {
   formatCodexThreadLifecycleTimingSummary,
   resolveReasoningEffort,
   shouldWarnCodexThreadLifecycleTimingSummary,
-  startOrResumeThread,
+  startOrResumeThread as startOrResumeThreadImpl,
   type CodexThreadLifecycleTimingLogger,
 } from "./thread-lifecycle.js";
+
+function startOrResumeThread(
+  params: Omit<Parameters<typeof startOrResumeThreadImpl>[0], "bindingStore" | "abandonClient"> & {
+    abandonClient?: () => Promise<void>;
+  },
+) {
+  registerCodexTestSessionIdentity(
+    params.params.sessionFile,
+    params.params.sessionId,
+    params.params.sessionKey,
+  );
+  return startOrResumeThreadImpl({
+    ...params,
+    client: ensureCodexTestClientNotificationSurface(params.client),
+    abandonClient: params.abandonClient ?? (async () => undefined),
+    bindingStore: testCodexAppServerBindingStore,
+  });
+}
 
 let tempDir: string;
 
@@ -619,6 +642,7 @@ describe("Codex app-server turn params", () => {
       serviceTier: "flex",
       personality: "none",
       developerInstructions: resumeParams.developerInstructions,
+      excludeTurns: true,
       persistExtendedHistory: true,
     });
     expect(resumeParams.developerInstructions).not.toContain(CODEX_GPT5_BEHAVIOR_CONTRACT);
@@ -833,6 +857,7 @@ describe("Codex app-server model provider selection", () => {
 
 describe("Codex app-server thread lifecycle timing", () => {
   beforeEach(async () => {
+    resetCodexTestBindingStore();
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-thread-lifecycle-"));
   });
 

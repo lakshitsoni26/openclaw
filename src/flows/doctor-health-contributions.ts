@@ -361,7 +361,8 @@ async function runLegacyStateHealth(ctx: DoctorHealthFlowContext): Promise<void>
   const { detectLegacyStateMigrations, runLegacyStateMigrations } =
     await import("../commands/doctor-state-migrations.js");
   const { note } = await loadNoteModule();
-  const legacyState = await detectLegacyStateMigrations({ cfg: ctx.cfg });
+  const env = ctx.env ?? process.env;
+  const legacyState = await detectLegacyStateMigrations({ cfg: ctx.cfg, env });
   if (legacyState.preview.length === 0) {
     return;
   }
@@ -378,6 +379,8 @@ async function runLegacyStateHealth(ctx: DoctorHealthFlowContext): Promise<void>
   }
   const migrated = await runLegacyStateMigrations({
     detected: legacyState,
+    config: ctx.cfg,
+    env,
     recoverCorruptTargetStore: ctx.options.repair === true || ctx.options.yes === true,
   });
   if (migrated.changes.length > 0) {
