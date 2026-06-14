@@ -81,6 +81,7 @@ type SideQuestionOptions = Parameters<typeof runCodexAppServerSideQuestionImpl>[
 const bindingStore: SideQuestionOptions["bindingStore"] = {
   read: (...args) => readCodexAppServerBindingMock(...args),
   mutate: vi.fn(),
+  prepareSessionGenerationReclaim: vi.fn(),
   adoptSessionGeneration: vi.fn(),
   retireSessionGeneration: vi.fn(),
   withLease: (_identity, run) => run(),
