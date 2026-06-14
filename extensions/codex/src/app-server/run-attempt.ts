@@ -1069,6 +1069,10 @@ export async function runCodexAppServerAttempt(
   let ownedClient: CodexAppServerClient | undefined;
   let subscribedThreadId: string | undefined;
   let trajectoryEndRecorded = false;
+  const recordTrajectorySessionEnd = (data: Record<string, unknown>) => {
+    trajectoryRecorder?.recordEvent("session.ended", data);
+    trajectoryEndRecorded = true;
+  };
   let nativeHookRelay: NativeHookRelayRegistrationHandle | undefined;
   let sharedClientLease: CodexAppServerClientLease | undefined;
   const releaseSharedClientLeaseOnce = () => {
@@ -2425,14 +2429,13 @@ export async function runCodexAppServerAttempt(
         stream: "codex_app_server.lifecycle",
         data: { phase: "turn_start_failed", error: turnStartErrorMessage },
       });
-      trajectoryRecorder?.recordEvent("session.ended", {
+      recordTrajectorySessionEnd({
         status: "error",
         threadId: thread.threadId,
         timedOut,
         aborted: runAbortController.signal.aborted,
         promptError: turnStartErrorMessage,
       });
-      trajectoryEndRecorded = true;
       runAgentHarnessLlmOutputHook({
         event: {
           runId: params.runId,
@@ -2737,7 +2740,7 @@ export async function runCodexAppServerAttempt(
       timedOut,
       yieldDetected,
     });
-    trajectoryRecorder?.recordEvent("session.ended", {
+    recordTrajectorySessionEnd({
       status: finalPromptError ? "error" : finalAborted || timedOut ? "interrupted" : "success",
       threadId: thread.threadId,
       turnId: activeTurnId,
@@ -2745,7 +2748,6 @@ export async function runCodexAppServerAttempt(
       yieldDetected,
       promptError: normalizeCodexTrajectoryError(finalPromptError),
     });
-    trajectoryEndRecorded = true;
     await mirrorTranscriptBestEffort({
       params,
       agentId: sessionAgentId,

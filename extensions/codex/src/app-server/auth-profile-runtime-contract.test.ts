@@ -131,7 +131,7 @@ function createCodexAuthProfileHarness(params: { startMethod: "thread/start" | "
   const seenAgentDirs: Array<string | undefined> = [];
   const requests: Array<{ method: string; params: unknown }> = [];
   const notificationHandlers = new Set<(notification: unknown) => Promise<void> | void>();
-  const requestHandlers = new Set<(request: unknown) => Promise<unknown> | unknown>();
+  const requestHandlers = new Set<(request: unknown) => unknown>();
   setCodexAppServerClientFactoryForTest(async (_startOptions, authProfileId, agentDir) => {
     seenAuthProfileIds.push(authProfileId);
     seenAgentDirs.push(agentDir);
@@ -150,7 +150,7 @@ function createCodexAuthProfileHarness(params: { startMethod: "thread/start" | "
         notificationHandlers.add(handler);
         return () => notificationHandlers.delete(handler);
       },
-      addRequestHandler: (handler: (request: unknown) => Promise<unknown> | unknown) => {
+      addRequestHandler: (handler: (request: unknown) => unknown) => {
         requestHandlers.add(handler);
         return () => requestHandlers.delete(handler);
       },
@@ -158,7 +158,9 @@ function createCodexAuthProfileHarness(params: { startMethod: "thread/start" | "
     } as never;
   });
   const notify = async (notification: unknown) => {
-    await Promise.all([...notificationHandlers].map((handler) => handler(notification)));
+    await Promise.all(
+      [...notificationHandlers].map((handler) => Promise.resolve(handler(notification))),
+    );
   };
   return {
     seenAuthProfileIds,

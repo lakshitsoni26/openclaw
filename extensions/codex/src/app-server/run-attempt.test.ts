@@ -1317,8 +1317,9 @@ describe("runCodexAppServerAttempt", () => {
     expect(JSON.stringify(result)).not.toContain(rawToolSecret);
   });
 
-  it("keeps leading delivery hints out of the Codex current user request", async () => {
-    for (const [index, deliveryHint] of MESSAGE_TOOL_DELIVERY_HINTS.entries()) {
+  it.each([...MESSAGE_TOOL_DELIVERY_HINTS.entries()])(
+    "keeps leading delivery hint %# out of the Codex current user request",
+    async (index, deliveryHint) => {
       const sessionFile = path.join(tempDir, `session-delivery-hint-${index}.jsonl`);
       const workspaceDir = path.join(tempDir, `workspace-delivery-hint-${index}`);
       const harness = createStartedThreadHarness();
@@ -1330,7 +1331,7 @@ describe("runCodexAppServerAttempt", () => {
       };
 
       const run = runCodexAppServerAttempt(params);
-      await harness.waitForMethod("turn/start");
+      await harness.waitForMethod("turn/start", fastWait.timeout);
       await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
       await run;
 
@@ -1346,8 +1347,9 @@ describe("runCodexAppServerAttempt", () => {
       expect(inputText).toContain(deliveryHint);
       expect(inputText).toContain("Current user request:\nhello");
       expect(inputText).not.toContain("Current user request:\nDelivery:");
-    }
-  });
+    },
+    10_000,
+  );
 
   it("mirrors the Codex prompt into the transcript when the turn starts", async () => {
     const sessionFile = path.join(tempDir, "session-early-prompt.jsonl");
@@ -2002,7 +2004,7 @@ describe("runCodexAppServerAttempt", () => {
               return { prependContext: "initial context" };
             }
             markRebuildStarted();
-            return await new Promise(() => undefined);
+            return await new Promise(() => {});
           },
         },
       ]),
@@ -3229,8 +3231,7 @@ describe("runCodexAppServerAttempt", () => {
     const workspaceDir = path.join(tempDir, "workspace");
     await writeExistingBinding(sessionFile, workspaceDir, { dynamicToolsFingerprint: "[]" });
     let turnStarts = 0;
-    let harness!: ReturnType<typeof createAppServerHarness>;
-    harness = createAppServerHarness(async (method) => {
+    const harness = createAppServerHarness(async (method) => {
       if (method === "thread/resume") {
         return threadStartResult("thread-existing");
       }
