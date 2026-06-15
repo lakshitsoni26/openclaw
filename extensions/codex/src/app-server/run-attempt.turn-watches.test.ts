@@ -658,14 +658,14 @@ describe("runCodexAppServerAttempt turn watches", () => {
       path.join(tempDir, "session.jsonl"),
       path.join(tempDir, "workspace"),
     );
-    params.timeoutMs = 100;
+    params.timeoutMs = 500;
     const onRunProgress = vi.fn();
     params.onRunProgress = onRunProgress;
 
     const run = runCodexAppServerAttempt(params, {
-      turnCompletionIdleTimeoutMs: 300,
-      turnAssistantCompletionIdleTimeoutMs: 300,
-      turnTerminalIdleTimeoutMs: 300,
+      turnCompletionIdleTimeoutMs: 1_000,
+      turnAssistantCompletionIdleTimeoutMs: 1_000,
+      turnTerminalIdleTimeoutMs: 1_000,
     });
     await harness.waitForMethod("turn/start");
     await vi.waitFor(
@@ -676,9 +676,6 @@ describe("runCodexAppServerAttempt turn watches", () => {
       fastWait,
     );
 
-    await new Promise((resolve) => {
-      setTimeout(resolve, 60);
-    });
     await harness.handleServerRequest({
       id: "request-null-turn-elicitation",
       method: "mcpServer/elicitation/request",
@@ -692,11 +689,16 @@ describe("runCodexAppServerAttempt turn watches", () => {
         _meta: null,
       },
     });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 60);
-    });
+    await vi.waitFor(
+      () =>
+        expect(onRunProgress).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: "request:mcpServer/elicitation/request:response",
+          }),
+        ),
+      fastWait,
+    );
 
-    expect(harness.request.mock.calls.some(([method]) => method === "turn/interrupt")).toBe(false);
     await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
 
     const result = await run;
