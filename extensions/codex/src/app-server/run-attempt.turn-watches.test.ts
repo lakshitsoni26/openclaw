@@ -464,14 +464,15 @@ describe("runCodexAppServerAttempt turn watches", () => {
       path.join(tempDir, "session.jsonl"),
       path.join(tempDir, "workspace"),
     );
-    params.timeoutMs = 100;
+    params.timeoutMs = 1_000;
     const onRunProgress = vi.fn();
     params.onRunProgress = onRunProgress;
 
     const run = runCodexAppServerAttempt(params, {
-      turnCompletionIdleTimeoutMs: 300,
-      turnAssistantCompletionIdleTimeoutMs: 300,
-      turnTerminalIdleTimeoutMs: 300,
+      clientFactory: harness.clientFactory,
+      turnCompletionIdleTimeoutMs: 3_000,
+      turnAssistantCompletionIdleTimeoutMs: 3_000,
+      turnTerminalIdleTimeoutMs: 3_000,
     });
     await harness.waitForMethod("turn/start");
     await vi.waitFor(
@@ -483,7 +484,7 @@ describe("runCodexAppServerAttempt turn watches", () => {
     );
 
     await new Promise((resolve) => {
-      setTimeout(resolve, 60);
+      setTimeout(resolve, 600);
     });
     await harness.notify({
       method: "rawResponseItem/completed",
@@ -499,7 +500,7 @@ describe("runCodexAppServerAttempt turn watches", () => {
       },
     });
     await new Promise((resolve) => {
-      setTimeout(resolve, 60);
+      setTimeout(resolve, 600);
     });
     await harness.notify({
       method: "rawResponseItem/completed",
@@ -528,7 +529,7 @@ describe("runCodexAppServerAttempt turn watches", () => {
     expect(
       progressReasons.filter((reason) => reason === "notification:rawResponseItem/completed"),
     ).toHaveLength(2);
-  });
+  }, 10_000);
 
   it("does not count non-turn app-server requests as turn attempt progress", async () => {
     const harness = createStartedThreadHarness();

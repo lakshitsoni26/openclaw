@@ -1777,6 +1777,7 @@ describe("bridgeCodexAppServerStartOptions", () => {
     });
     vi.stubEnv("CODEX_API_KEY", "codex-env-api-key");
     vi.stubEnv("OPENAI_API_KEY", "openai-env-api-key");
+    vi.stubEnv("CODEX_HOME", path.join(agentDir, "codex-cli"));
     try {
       await applyCodexAppServerAuthProfile({
         client: { request } as never,

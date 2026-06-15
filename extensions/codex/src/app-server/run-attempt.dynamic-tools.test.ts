@@ -119,7 +119,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       ),
     );
 
-    const run = runCodexAppServerAttempt(params);
+    const run = runCodexAppServerAttempt(params, { clientFactory: harness.clientFactory });
     await harness.waitForMethod("thread/start");
     await vi.waitFor(() =>
       expect(onExecutionPhase).toHaveBeenCalledWith(

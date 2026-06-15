@@ -294,7 +294,11 @@ export function createAppServerHarness(
     return requestImpl(method, params, requestOptions as { signal?: AbortSignal } | undefined);
   });
 
-  setCodexAppServerClientFactoryForTest(async (_startOptions, authProfileId, agentDir) => {
+  const clientFactory: CodexAppServerClientFactory = async (
+    _startOptions,
+    authProfileId,
+    agentDir,
+  ) => {
     options.onStart?.(authProfileId, agentDir);
     return {
       getServerVersion: () => "0.132.0",
@@ -318,7 +322,9 @@ export function createAppServerHarness(
         return () => closeHandlers.delete(handler);
       },
     } as never;
-  });
+  };
+
+  setCodexAppServerClientFactoryForTest(clientFactory);
 
   const waitForServerRequestHandler = async () => {
     await vi.waitFor(() => expect(handleServerRequest).toBeTypeOf("function"), {
@@ -341,6 +347,7 @@ export function createAppServerHarness(
   };
 
   return {
+    clientFactory,
     request,
     requests,
     waitForMethod: async (method: string, timeoutMs: number = appServerHarnessWait.timeout) => {

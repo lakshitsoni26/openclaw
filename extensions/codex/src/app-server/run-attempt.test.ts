@@ -3939,6 +3939,7 @@ describe("runCodexAppServerAttempt", () => {
         },
       },
     };
+    vi.stubEnv("CODEX_HOME", path.join(agentDir, "codex-cli"));
     const appServer = resolveCodexAppServerRuntimeOptions({
       pluginConfig: readCodexPluginConfig(pluginConfig),
     });
