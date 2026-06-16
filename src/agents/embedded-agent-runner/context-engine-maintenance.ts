@@ -36,7 +36,7 @@ import { resolveContextEngineCapabilities } from "./context-engine-capabilities.
 import { resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import {
-  rewriteTranscriptEntriesInSessionFile,
+  rewriteTranscriptEntriesInRuntimeTranscript,
   rewriteTranscriptEntriesInSessionManager,
 } from "./transcript-rewrite.js";
 
@@ -333,23 +333,25 @@ export function buildContextEngineMaintenanceRuntimeContext(params: {
           ? await params.withSessionManagerRewriteLock(rewriteSessionManagerEntries)
           : rewriteSessionManagerEntries();
       }
-      const rewriteTranscriptEntriesInFile = async () =>
-        await rewriteTranscriptEntriesInSessionFile({
-          sessionFile: params.sessionFile,
-          sessionId: params.sessionId,
-          sessionKey: params.sessionKey,
-          agentId: params.agentId,
-          config: params.config,
+      const rewriteRuntimeTranscriptEntries = async () =>
+        await rewriteTranscriptEntriesInRuntimeTranscript({
+          scope: {
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey ?? params.sessionId,
+            sessionFile: params.sessionFile,
+            ...(params.agentId ? { agentId: params.agentId } : {}),
+          },
           request,
+          config: params.config,
         });
       const rewriteSessionKey = normalizeSessionKey(params.sessionKey ?? params.sessionId);
       if (params.deferTranscriptRewriteToSessionLane && rewriteSessionKey) {
         return await enqueueCommandInLane(
           resolveSessionLane(rewriteSessionKey),
-          async () => await rewriteTranscriptEntriesInFile(),
+          async () => await rewriteRuntimeTranscriptEntries(),
         );
       }
-      return await rewriteTranscriptEntriesInFile();
+      return await rewriteRuntimeTranscriptEntries();
     },
   };
 }
