@@ -2,6 +2,12 @@
 
 Docs: https://docs.openclaw.ai
 
+## 2026.6.9-alpha.6
+
+### Fixes
+
+- Alpha/nightly release validation refreshes generated plugin/config metadata, aligns the Parallel plugin version with core, and ratchets the Plugin SDK callable export budget for the current release surface.
+
 ## 2026.6.8
 
 ### Highlights
