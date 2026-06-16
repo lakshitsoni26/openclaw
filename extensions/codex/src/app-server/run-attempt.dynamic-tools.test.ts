@@ -181,6 +181,10 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
         arguments: {},
       },
     });
+    await vi.waitFor(() => expect(slowTool.execute).toHaveBeenCalledTimes(1), {
+      interval: 1,
+      timeout: 5_000,
+    });
     const nativeItem = {
       type: "commandExecution",
       id: "command-before-dynamic",
