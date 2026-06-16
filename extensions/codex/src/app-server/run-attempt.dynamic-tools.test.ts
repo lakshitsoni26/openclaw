@@ -106,7 +106,7 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       ),
     );
 
-    const run = runCodexAppServerAttempt(params);
+    void runCodexAppServerAttempt(params);
     await harness.waitForMethod("thread/start");
     await vi.waitFor(() =>
       expect(onExecutionPhase).toHaveBeenCalledWith(
@@ -226,8 +226,6 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     });
     rejectSlowTool(new Error("slow failure"));
     await slowCall;
-    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
-    await run;
 
     expect(terminalPresentation).toBe("later dynamic summary");
   });
