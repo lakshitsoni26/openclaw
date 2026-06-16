@@ -3,6 +3,8 @@ import {
   findSessionAccessorBoundaryViolations,
   migratedBundledPluginSessionAccessorFiles,
   findSessionAccessorWriteBoundaryViolations,
+  findSessionLifecycleCleanupBoundaryViolations,
+  migratedSessionLifecycleCleanupFiles,
   migratedSessionAccessorFiles,
   migratedSessionAccessorWriteFiles,
 } from "../../scripts/check-session-accessor-boundary.mjs";
@@ -74,6 +76,16 @@ describe("session accessor boundary guard", () => {
         "src/auto-reply/reply/session-reset-model.ts",
         "src/auto-reply/reply/session-updates.ts",
         "src/auto-reply/reply/session-usage.ts",
+      ]),
+    );
+  });
+
+  it("ratchets only the lifecycle cleanup files migrated to backend cleanup", () => {
+    expect(migratedSessionLifecycleCleanupFiles).toEqual(
+      new Set([
+        "src/config/sessions/cleanup-service.ts",
+        "src/cron/session-reaper.ts",
+        "src/infra/heartbeat-runner.ts",
       ]),
     );
   });
@@ -176,6 +188,35 @@ describe("session accessor boundary guard", () => {
         updateSessionEntry({ storePath, sessionKey }, () => undefined);
       `),
     ).toEqual([]);
+  });
+
+  it("flags direct lifecycle cleanup helper usage", () => {
+    expect(
+      findSessionLifecycleCleanupBoundaryViolations(`
+        import { archiveRemovedSessionTranscripts } from "../config/sessions/store.js";
+        import { cleanupArchivedSessionTranscripts } from "../gateway/session-utils.fs.js";
+        archiveRemovedSessionTranscripts({ removedSessionFiles, referencedSessionIds, storePath, reason: "deleted" });
+        cleanupArchivedSessionTranscripts({ directories, rules });
+      `),
+    ).toEqual([
+      {
+        line: 2,
+        reason: 'imports legacy session store lifecycle cleanup "archiveRemovedSessionTranscripts"',
+      },
+      {
+        line: 3,
+        reason:
+          'imports legacy session store lifecycle cleanup "cleanupArchivedSessionTranscripts"',
+      },
+      {
+        line: 4,
+        reason: 'calls legacy session store lifecycle cleanup "archiveRemovedSessionTranscripts"',
+      },
+      {
+        line: 5,
+        reason: 'calls legacy session store lifecycle cleanup "cleanupArchivedSessionTranscripts"',
+      },
+    ]);
   });
 
   it("ignores comments and strings that describe legacy readers", () => {

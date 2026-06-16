@@ -29,6 +29,10 @@ const legacyWriterNames = new Set([
   "updateSessionStore",
   "updateSessionStoreEntry",
 ]);
+const legacyLifecycleCleanupNames = new Set([
+  "archiveRemovedSessionTranscripts",
+  "cleanupArchivedSessionTranscripts",
+]);
 
 export const migratedSessionAccessorFiles = new Set([
   "src/agents/embedded-agent-runner/compaction-successor-transcript.ts",
@@ -86,6 +90,12 @@ export const migratedSessionAccessorWriteFiles = new Set([
   "src/auto-reply/reply/session-reset-model.ts",
   "src/auto-reply/reply/session-updates.ts",
   "src/auto-reply/reply/session-usage.ts",
+]);
+
+export const migratedSessionLifecycleCleanupFiles = new Set([
+  "src/config/sessions/cleanup-service.ts",
+  "src/cron/session-reaper.ts",
+  "src/infra/heartbeat-runner.ts",
 ]);
 
 function normalizeRelativePath(filePath) {
@@ -206,6 +216,15 @@ export function findSessionAccessorWriteBoundaryViolations(content, fileName = "
   return findNamedSessionStoreViolations(content, fileName, legacyWriterNames, "writer");
 }
 
+export function findSessionLifecycleCleanupBoundaryViolations(content, fileName = "source.ts") {
+  return findNamedSessionStoreViolations(
+    content,
+    fileName,
+    legacyLifecycleCleanupNames,
+    "lifecycle cleanup",
+  );
+}
+
 export async function main() {
   const repoRoot = resolveRepoRoot(import.meta.url);
   const readSourceRoots = resolveSourceRoots(repoRoot, [
@@ -241,7 +260,16 @@ export async function main() {
       ),
     findViolations: findSessionAccessorWriteBoundaryViolations,
   });
-  const violations = [...readViolations, ...writeViolations];
+  const lifecycleCleanupViolations = await collectFileViolations({
+    repoRoot,
+    sourceRoots: readSourceRoots,
+    skipFile: (filePath) =>
+      !migratedSessionLifecycleCleanupFiles.has(
+        normalizeRelativePath(path.relative(repoRoot, filePath)),
+      ),
+    findViolations: findSessionLifecycleCleanupBoundaryViolations,
+  });
+  const violations = [...readViolations, ...writeViolations, ...lifecycleCleanupViolations];
 
   if (violations.length === 0) {
     console.log("session accessor boundary guard passed.");

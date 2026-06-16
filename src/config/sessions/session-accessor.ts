@@ -16,12 +16,17 @@ import type { ResolvedSessionMaintenanceConfig } from "./store-maintenance.js";
 import {
   getSessionEntry,
   cleanupSessionLifecycleArtifacts as cleanupFileSessionLifecycleArtifacts,
+  applySessionEntryLifecycleMutation as applyFileSessionEntryLifecycleMutation,
   listSessionEntries as listFileSessionEntries,
   loadSessionStore,
   patchSessionEntry as patchFileSessionEntry,
   readSessionUpdatedAt as readFileSessionUpdatedAt,
   resolveSessionStoreEntry,
   updateSessionStoreEntry as updateFileSessionStoreEntry,
+  type SessionArchivedTranscriptCleanupRule,
+  type SessionEntryLifecycleMutationResult,
+  type SessionEntryLifecycleRemoval,
+  type SessionEntryLifecycleUpsert,
   type SessionLifecycleArtifactCleanupParams,
   type SessionLifecycleArtifactCleanupResult,
 } from "./store.js";
@@ -172,6 +177,12 @@ export type SessionEntryPatchContext = {
 };
 
 export type { SessionLifecycleArtifactCleanupParams, SessionLifecycleArtifactCleanupResult };
+export type {
+  SessionArchivedTranscriptCleanupRule,
+  SessionEntryLifecycleMutationResult,
+  SessionEntryLifecycleRemoval,
+  SessionEntryLifecycleUpsert,
+};
 
 /** Returns the entry for a canonical or alias session key, if one exists. */
 export function loadSessionEntry(scope: SessionAccessScope): SessionEntry | undefined {
@@ -299,6 +310,29 @@ export async function cleanupSessionLifecycleArtifacts(
   params: SessionLifecycleArtifactCleanupParams,
 ): Promise<SessionLifecycleArtifactCleanupResult> {
   return await cleanupFileSessionLifecycleArtifacts(params);
+}
+
+/** Applies exact entry lifecycle mutations and artifact cleanup at the storage boundary. */
+export async function applySessionEntryLifecycleMutation(params: {
+  storePath: string;
+  removals?: Iterable<SessionEntryLifecycleRemoval>;
+  upserts?: Iterable<SessionEntryLifecycleUpsert>;
+  activeSessionKey?: string;
+  maintenanceOverride?: Partial<ResolvedSessionMaintenanceConfig>;
+  skipMaintenance?: boolean;
+  archiveReason?: "deleted" | "reset";
+  restrictArchivedTranscriptsToStoreDir?: boolean;
+  cleanupArchivedTranscripts?: {
+    rules: SessionArchivedTranscriptCleanupRule[];
+    nowMs?: number;
+  };
+  pruneUnreferencedArtifacts?: {
+    olderThanMs: number;
+    dryRun?: boolean;
+  };
+  captureArtifactCleanupError?: boolean;
+}): Promise<SessionEntryLifecycleMutationResult> {
+  return await applyFileSessionEntryLifecycleMutation(params);
 }
 
 /** Reads parsed transcript records from an explicit or derived transcript target. */
