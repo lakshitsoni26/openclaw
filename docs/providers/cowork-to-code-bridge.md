@@ -15,9 +15,9 @@ This is a community tool and is not officially supported by Anthropic or OpenCla
 
 ## Why use this?
 
-| Approach | Cost route | Best for |
-|---|---|---|
-| Anthropic API | Pay per token through Claude Console or cloud | Production apps, shared automation, volume |
+| Approach              | Cost route                                      | Best for                                     |
+| --------------------- | ----------------------------------------------- | -------------------------------------------- |
+| Anthropic API         | Pay per token through Claude Console or cloud   | Production apps, shared automation, volume   |
 | Cowork-to-Code Bridge | Claude Code / `claude -p` plan and credit rules | Escalating cloud tasks to your local machine |
 
 If your workflow requires real execution (compiling, running tests, shell commands) and you want to use your existing Claude subscription without managing separate API billing, this bridge provides a secure, file-based way to hand tasks from the cloud down to your local machine.
@@ -53,6 +53,7 @@ The bridge:
     cd cowork-to-code-bridge
     bun install
     ```
+
   </Step>
 
   <Step title="Connect from Cowork">
@@ -61,6 +62,7 @@ The bridge:
     ```text
     Connect to my machine via the cowork-to-code bridge at ~/.cowork-to-code-bridge — mount that folder, read its CLAUDE.md, and confirm the bridge is live.
     ```
+
   </Step>
 
   <Step title="Test the connection">
@@ -69,6 +71,7 @@ The bridge:
     > *"build me a small web app on my machine"*
     > *"run my tests and fix what fails"*
     > *"check my machine's health"*
+
   </Step>
 </Steps>
 
