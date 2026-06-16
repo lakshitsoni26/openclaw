@@ -1722,6 +1722,8 @@ describe("dispatchReplyFromConfig", () => {
     } as OpenClawConfig;
     const sessionKey = "agent:main:main";
     const entry = {
+      sessionId: "session-1",
+      updatedAt: 1,
       deliveryContext: {
         channel: "telegram",
         to: "telegram:999",
