@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  findGatewaySessionCreateLifecycleViolations,
   findSessionAccessorBoundaryViolations,
-  migratedBundledPluginSessionAccessorFiles,
   findSessionAccessorWriteBoundaryViolations,
+  migratedBundledPluginSessionAccessorFiles,
   migratedSessionAccessorFiles,
   migratedSessionAccessorWriteFiles,
 } from "../../scripts/check-session-accessor-boundary.mjs";
@@ -174,6 +175,40 @@ describe("session accessor boundary guard", () => {
       findSessionAccessorWriteBoundaryViolations(`
         import { updateSessionEntry } from "../config/sessions/session-accessor.js";
         updateSessionEntry({ storePath, sessionKey }, () => undefined);
+      `),
+    ).toEqual([]);
+  });
+
+  it("flags legacy writers inside the gateway sessions.create lifecycle", () => {
+    expect(
+      findGatewaySessionCreateLifecycleViolations(`
+        const handlers = {
+          "sessions.create": async () => {
+            await updateSessionStore(storePath, () => undefined);
+            ensureSessionTranscriptFile(params);
+          },
+          "sessions.patch": async () => {
+            await updateSessionStore(storePath, () => undefined);
+          },
+        };
+      `),
+    ).toEqual([
+      { line: 4, reason: 'calls legacy sessions.create lifecycle writer "updateSessionStore"' },
+      {
+        line: 5,
+        reason: 'calls legacy sessions.create lifecycle writer "ensureSessionTranscriptFile"',
+      },
+    ]);
+  });
+
+  it("allows the gateway sessions.create lifecycle accessor seam", () => {
+    expect(
+      findGatewaySessionCreateLifecycleViolations(`
+        const handlers = {
+          "sessions.create": async () => {
+            await createSessionEntryWithTranscript(scope, createEntry);
+          },
+        };
       `),
     ).toEqual([]);
   });
