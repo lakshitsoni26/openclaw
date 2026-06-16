@@ -158,7 +158,14 @@ function makeRoute(overrides: Partial<TestRoute> = {}): TestRoute {
 }
 
 function makeMsg(overrides: TestMsgOverrides = {}): TestMsg {
-  const { event, payload, platform, ...messageOverrides } = overrides;
+  const {
+    event,
+    payload,
+    platform,
+    from = "+1000",
+    conversationId = from,
+    ...messageOverrides
+  } = overrides;
   return createTestWebInboundMessage({
     event: {
       id: "msg1",
@@ -173,8 +180,8 @@ function makeMsg(overrides: TestMsgOverrides = {}): TestMsg {
       recipientJid: "+2000",
       ...platform,
     },
-    from: "+1000",
-    conversationId: "+1000",
+    from,
+    conversationId,
     accountId: "default",
     chatType: "direct",
     ...messageOverrides,
