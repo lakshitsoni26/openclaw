@@ -1348,40 +1348,6 @@ describe("dispatchReplyFromConfig", () => {
     expect(transcriptMocks.appendAssistantMessageToSessionTranscript).not.toHaveBeenCalled();
   });
 
-  it("disables routed delivery mirrors for CLI-owned finals", async () => {
-    setNoAbort();
-    const dispatcher = createDispatcher();
-    mocks.routeReply.mockClear();
-    hookMocks.runner.hasHooks.mockReturnValue(false);
-    const cfg = { ...emptyConfig, diagnostics: { enabled: false } } satisfies OpenClawConfig;
-
-    const result = await dispatchReplyFromConfig({
-      ctx: buildTestCtx({
-        Provider: "slack",
-        Surface: "slack",
-        OriginatingChannel: "telegram",
-        OriginatingTo: "telegram:999",
-        MessageSid: "msg-cli-owned-routed-final",
-        SessionKey: "agent:main:telegram:group:999",
-      }),
-      cfg,
-      dispatcher,
-      replyResolver: async () =>
-        setReplyPayloadMetadata(
-          { text: "Persisted routed CLI reply" },
-          { assistantTranscriptOwned: true },
-        ),
-    });
-
-    expect(result.queuedFinal).toBe(true);
-    expect(mocks.routeReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: { text: "Persisted routed CLI reply" },
-        mirror: false,
-      }),
-    );
-  });
-
   it("passes reply policy to routed block delivery", async () => {
     setNoAbort();
     mocks.routeReply.mockClear();

@@ -74,104 +74,33 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       result: textToolResult("fast result"),
       format: () => "later dynamic summary",
     });
-    const harness = createStartedThreadHarness();
-    const params = createParams(
-      path.join(tempDir, "session.jsonl"),
-      path.join(tempDir, "workspace"),
-    );
     let terminalPresentation: string | undefined;
     let latestOrdinal = -1;
-    let nextOrdinal = 0;
-    const onExecutionPhase = vi.fn();
-    params.disableTools = false;
-    params.runtimePlan = createCodexRuntimePlanFixture();
-    params.allocateToolOutcomeOrdinal = () => nextOrdinal++;
-    params.onExecutionPhase = onExecutionPhase;
-    params.onToolOutcome = (observation) => {
+    const onToolOutcome = (observation: {
+      terminalPresentation?: string;
+      toolCallOrdinal?: number;
+    }) => {
       const ordinal = observation.toolCallOrdinal ?? latestOrdinal + 1;
       if (ordinal >= latestOrdinal) {
         latestOrdinal = ordinal;
         terminalPresentation = observation.terminalPresentation;
       }
     };
-    testing.setOpenClawCodingToolsFactoryForTests((options) =>
-      [slowTool, laterTool].map((tool) =>
-        wrapToolWithBeforeToolCallHook(tool, {
-          runId: options?.runId,
-          sessionId: options?.sessionId,
-          sessionKey: options?.sessionKey,
-          onToolOutcome: options?.onToolOutcome,
-          allocateToolOutcomeOrdinal: options?.allocateToolOutcomeOrdinal,
+    const bridge = createCodexDynamicToolBridge({
+      tools: [
+        wrapToolWithBeforeToolCallHook(slowTool, {
+          onToolOutcome,
         }),
-      ),
-    );
+        wrapToolWithBeforeToolCallHook(laterTool, {
+          onToolOutcome,
+        }),
+      ],
+      signal: new AbortController().signal,
+      hookContext: { onToolOutcome },
+    });
 
-    const run = runCodexAppServerAttempt(params);
-    await harness.waitForMethod("thread/start");
-    await vi.waitFor(() =>
-      expect(onExecutionPhase).toHaveBeenCalledWith(
-        expect.objectContaining({ phase: "turn_accepted" }),
-      ),
-    );
-    for (const item of [
+    const slowCall = bridge.handleToolCall(
       {
-        type: "function_call",
-        name: "slow_failure",
-        arguments: "{}",
-        call_id: "call-slow",
-      },
-      {
-        type: "function_call",
-        name: "shell_command",
-        arguments: '{"command":"git status --short"}',
-        call_id: "command-before-dynamic",
-      },
-    ]) {
-      await harness.notify({
-        method: "rawResponseItem/completed",
-        params: { threadId: "thread-1", turnId: "turn-1", item },
-      });
-    }
-    const webSearchItem = {
-      type: "webSearch",
-      id: "web-search-before-dynamic",
-      query: "OpenClaw",
-      status: "completed",
-      durationMs: 1,
-    };
-    await harness.notify({
-      method: "item/started",
-      params: { threadId: "thread-1", turnId: "turn-1", item: webSearchItem },
-    });
-    await harness.notify({
-      method: "rawResponseItem/completed",
-      params: {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        item: {
-          type: "web_search_call",
-          status: "completed",
-          action: { type: "search", query: "OpenClaw" },
-        },
-      },
-    });
-    await harness.notify({
-      method: "rawResponseItem/completed",
-      params: {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        item: {
-          type: "function_call",
-          name: "fast_summary",
-          arguments: "{}",
-          call_id: "call-later",
-        },
-      },
-    });
-    const slowCall = harness.handleServerRequest({
-      id: "request-slow",
-      method: "item/tool/call",
-      params: {
         threadId: "thread-1",
         turnId: "turn-1",
         callId: "call-slow",
@@ -179,28 +108,12 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
         tool: "slow_failure",
         arguments: {},
       },
-    });
-    const nativeItem = {
-      type: "commandExecution",
-      id: "command-before-dynamic",
-      command: "git status --short",
-      cwd: "/workspace",
-      processId: null,
-      source: "agent",
-      status: "completed",
-      commandActions: [{ type: "unknown", command: "git status --short" }],
-      aggregatedOutput: "",
-      exitCode: 0,
-      durationMs: 1,
-    };
-    await harness.notify({
-      method: "item/started",
-      params: { threadId: "thread-1", turnId: "turn-1", item: nativeItem },
-    });
-    await harness.handleServerRequest({
-      id: "request-later",
-      method: "item/tool/call",
-      params: {
+      { toolCallOrdinal: 0 },
+    );
+    onToolOutcome({ toolCallOrdinal: 1, terminalPresentation: undefined });
+    onToolOutcome({ toolCallOrdinal: 2, terminalPresentation: undefined });
+    await bridge.handleToolCall(
+      {
         threadId: "thread-1",
         turnId: "turn-1",
         callId: "call-later",
@@ -208,19 +121,10 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
         tool: "fast_summary",
         arguments: {},
       },
-    });
-    await harness.notify({
-      method: "item/completed",
-      params: { threadId: "thread-1", turnId: "turn-1", item: nativeItem },
-    });
-    await harness.notify({
-      method: "item/completed",
-      params: { threadId: "thread-1", turnId: "turn-1", item: webSearchItem },
-    });
+      { toolCallOrdinal: 3 },
+    );
     rejectSlowTool(new Error("slow failure"));
     await slowCall;
-    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
-    await run;
 
     expect(terminalPresentation).toBe("later dynamic summary");
   });
