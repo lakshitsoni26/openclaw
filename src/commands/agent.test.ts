@@ -357,6 +357,7 @@ function installThinkingTestProviders() {
 }
 
 beforeEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
   resetPluginRuntimeStateForTest();
   installThinkingTestProviders();
