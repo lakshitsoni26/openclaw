@@ -1348,12 +1348,14 @@ describe("createTelegramBot", () => {
       ]),
     });
 
+    const storePath = `/tmp/openclaw-telegram-model-display-${process.pid}-${Date.now()}.json`;
     const config = {
       agents: {
         defaults: {
           model: "openai/gpt-5",
         },
       },
+      session: { store: storePath },
       channels: {
         telegram: {
           dmPolicy: "open",
