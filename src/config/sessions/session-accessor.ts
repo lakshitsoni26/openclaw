@@ -219,7 +219,13 @@ export async function updateSessionEntry(
   });
 }
 
-/** Cleans scoped session lifecycle entries and transcript artifacts through the accessor seam. */
+/**
+ * Cleans scoped session lifecycle entries and artifacts through the accessor seam.
+ *
+ * Future SQLite storage should handle session-entry cleanup and SQLite-owned
+ * artifact rows in one transaction. Legacy filesystem artifacts remain
+ * best-effort cleanup after the durable storage update commits.
+ */
 export async function cleanupSessionLifecycleArtifacts(
   params: SessionLifecycleArtifactCleanupParams,
 ): Promise<SessionLifecycleArtifactCleanupResult> {

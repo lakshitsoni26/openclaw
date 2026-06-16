@@ -194,7 +194,12 @@ type SessionEntryWorkflowOptions = {
 };
 
 export type SessionLifecycleArtifactCleanupParams = {
-  /** Session store to clean. */
+  /**
+   * Session store to clean.
+   *
+   * This grouped operation owns lifecycle row cleanup plus owned artifact
+   * cleanup so callers do not compose entry mutation and file deletion.
+   */
   storePath: string;
   /** Matches the persisted session-key segment after `agent:<id>:`. */
   sessionKeySegmentPrefix: string;
@@ -975,7 +980,13 @@ async function archiveUnreferencedLifecycleTranscriptArtifacts(params: {
   });
 }
 
-/** Cleans scoped session lifecycle entries and their unreferenced transcript artifacts. */
+/**
+ * Cleans scoped session lifecycle entries and their unreferenced transcript artifacts.
+ *
+ * A SQLite implementation should delete matching session rows and SQLite-owned
+ * artifact rows in one transaction. Filesystem deletion is only for legacy
+ * imported files or product artifacts, so it remains best-effort after commit.
+ */
 export async function cleanupSessionLifecycleArtifacts(
   params: SessionLifecycleArtifactCleanupParams,
 ): Promise<SessionLifecycleArtifactCleanupResult> {
@@ -995,6 +1006,9 @@ export async function cleanupSessionLifecycleArtifacts(
 
   await runExclusiveSessionStoreWrite(storePath, async () => {
     const store = loadMutableSessionStoreForWriter(storePath);
+    // File-backed cleanup keeps the current sessions.json writer slot as the
+    // transaction boundary. Transcript and trajectory files cannot join that
+    // atomic write, so their cleanup stays best-effort under the same lock.
     // Delete only rows owned by the named lifecycle. Orphan transcript cleanup
     // reacquires this writer lock later so its reference set cannot go stale.
     for (const [sessionKey, entry] of Object.entries(store)) {
