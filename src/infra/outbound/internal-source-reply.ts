@@ -96,7 +96,12 @@ async function hasConfiguredCurrentSourceChannel(
   const plugin =
     outboundPlugin ??
     getLoadedChannelPlugin(provider as Parameters<typeof getLoadedChannelPlugin>[0]);
-  if (!plugin?.actions?.handleAction && !plugin?.outbound) {
+  const hasOutbound = Boolean(plugin?.outbound);
+  const handlesAction =
+    Boolean(plugin?.actions?.handleAction) &&
+    plugin?.actions?.supportsAction?.({ action: input.action }) !== false;
+
+  if (!hasOutbound && !handlesAction) {
     return false;
   }
   const configuredChannels = await listConfiguredMessageChannels(input.cfg);
