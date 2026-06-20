@@ -99,7 +99,7 @@ async function hasConfiguredCurrentSourceChannel(
   const hasOutbound = Boolean(plugin?.outbound);
   const handlesAction =
     Boolean(plugin?.actions?.handleAction) &&
-    plugin?.actions?.supportsAction?.({ action: input.action }) !== false;
+    plugin?.actions?.supportsAction?.({ action: input.action as any }) !== false;
 
   if (!hasOutbound && !handlesAction) {
     return false;

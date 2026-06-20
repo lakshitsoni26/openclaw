@@ -16,7 +16,7 @@ import { shouldUseInternalSourceReplySink } from "./internal-source-reply.js";
 
 describe("internal-source-reply sink fallback", () => {
   afterEach(() => {
-    setActivePluginRegistry(undefined);
+    setActivePluginRegistry(createTestRegistry([]));
   });
 
   const baseInput = {
@@ -37,7 +37,7 @@ describe("internal-source-reply sink fallback", () => {
             id: "custom-slack",
             actions: {
               handleAction: async () => ({ handled: true }),
-              supportsAction: ({ action }) => action === "send",
+              supportsAction: ({ action }: any) => action === "send",
             },
             config: {
               listAccountIds: () => ["default"],
@@ -63,7 +63,7 @@ describe("internal-source-reply sink fallback", () => {
             id: "custom-slack",
             actions: {
               handleAction: async () => ({ handled: true }),
-              supportsAction: ({ action }) => action !== "send", // Declines "send"
+              supportsAction: ({ action }: any) => action !== "send", // Declines "send"
             },
             config: {
               listAccountIds: () => ["default"],
